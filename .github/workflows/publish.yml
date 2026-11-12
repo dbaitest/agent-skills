@@ -1,0 +1,71 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  # A release can be published again by hand when npm rejected it half way.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to publish, for example v0.1.0
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Trusted publishing: GitHub mints an OIDC token that npm exchanges for a one-off
+      # credential, and the same token signs the provenance statement.
+      id-token: write
+    # The trusted publisher registered on npmjs.com names this environment.
+    environment: npm
+
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      # Trusted publishing needs Node 22.14+ and npm 11.5.1+; the npm bundled with Node 22 is
+      # older and fails with a misleading 404, so npm is upgraded explicitly.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm install --global npm@11
+
+      # The tag is the version: v0.1.0 publishes 0.1.0. package.json holds 0.0.0 on main.
+      - name: Set the version from the tag
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::The tag '$TAG' is not v<semver>."
+            exit 1
+          fi
+          npm version "$version" --no-git-tag-version
+
+      # The tag was cut from a main that passed CI; these are the last cheap checks that what is
+      # about to be published is what was tested.
+      - run: npm test
+      - run: node scripts/sync-compat.mjs --check
+      - run: node scripts/check-pack.mjs
+
+      # A version cannot be published twice. The first release (0.1.0) is published by hand,
+      # because a trusted publisher can only be added to a package that exists; its GitHub
+      # release then only runs the checks above.
+      - name: Publish to npm
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          if npm view "@dbaitest/skills@$version" version >/dev/null 2>&1; then
+            echo "::notice::@dbaitest/skills@$version is already on npm; nothing to publish."
+            exit 0
+          fi
+          npm publish --access public
