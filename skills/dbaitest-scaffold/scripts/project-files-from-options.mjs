@@ -98,7 +98,8 @@ export function packagesFor(options, versions) {
 /**
  * Computes the files to write.
  * @param {object} options validated options: name, engines, schema, framework, centralPackages,
- *   and for dacpac either sqlprojPath (relative, backslashes) or dacpacPath {directory, fileName}.
+ *   and for dacpac dacpacFileName plus either sqlprojPath or dacpacPath {directory}; both paths
+ *   are already in .csproj form (see csprojPath in project-environment.mjs).
  * @param {object} versions the skill's versions.json.
  * @param {(relativePath: string) => string} readTemplate reads a file under templates/.
  * @returns {{path: string, content: string}[]} paths relative to the project directory, '/'-separated.
@@ -129,7 +130,10 @@ export function projectFiles(options, versions, readTemplate) {
   if (options.schema === 'dacpac') {
     files.push({
       path: 'DatabaseTests.cs',
-      content: fill(readTemplate('DatabaseTests.Dacpac.cs.tmpl'), { ...values, DacpacFileName: options.dacpacFileName }),
+      content: fill(readTemplate('DatabaseTests.Dacpac.cs.tmpl'), {
+        ...values,
+        DacpacFileName: options.dacpacFileName.replace(/["\\]/g, '\\$&'), // inside a C# string literal
+      }),
     });
     return files;
   }

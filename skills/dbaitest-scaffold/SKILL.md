@@ -32,18 +32,25 @@ Run these and stop with the fix if one fails:
 
 1. **Project name** — a C# namespace, e.g. `Shop.Database.Tests`. Default: `<RepoOrSolutionName>.Database.Tests`.
 2. **Location** — default `tests/<name>` if the repository has a `tests/` folder, else `./<name>`.
+   The folder must not sit under a directory that holds another `*.csproj` (an app project at the
+   repository root compiles every `.cs` below it, including the tests). If it would, pick a sibling
+   folder such as `tests/<name>` next to `src/`, or tell the user.
 3. **Engines** — any of `mssql`, `postgres`, `mysql`. Default: the engine(s) the user's app uses; all three if unknown.
 4. **Schema source**
    - `scripts` (default): `.sql` files per engine under `Schema/<engine>/`, applied in file-name order.
    - `dacpac` (SQL Server only): the user has a database project (`.sqlproj`) or a built `.dacpac`.
-     Look for a `*.sqlproj` in the repository first and propose it.
+     Look for a `*.sqlproj` in the repository first and propose it. Only an SDK-style project
+     (`<Project Sdk="Microsoft.Build.Sql">` or `MSBuild.Sdk.SqlProj`) builds with `dotnet`; for a
+     classic Visual Studio SSDT project, use the `.dacpac` it builds (`--dacpac`).
 
 Do not ask about anything the repository already answers.
 
 ## 3. Generate
 
-Run the generator from this skill's directory (where this `SKILL.md` is — for example
-`.claude/skills/dbaitest-scaffold/` or `.agents/skills/dbaitest-scaffold/`):
+Run the generator **from the repository root**. `<skill-dir>` is only where the script lives (the
+directory of this `SKILL.md`, for example `.claude/skills/dbaitest-scaffold/` or
+`.agents/skills/dbaitest-scaffold/`); `--dir`, `--sqlproj` and `--dacpac` are relative to the
+current directory. Never generate into the skill directory.
 
 ```bash
 node <skill-dir>/scripts/scaffold.mjs --name Shop.Database.Tests --dir tests/Shop.Database.Tests --engines mssql,postgres

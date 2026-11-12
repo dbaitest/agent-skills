@@ -14,6 +14,8 @@ Find the symptom, apply the fix, run `dotnet test` again. Change one thing at a 
 | `Table '...Customers' doesn't exist` (MySQL) | Table names are case-sensitive on Linux | Same names, same case, in the schema and the test SQL. |
 | The `.dacpac` was not found | Not copied to the output, or a different file name | Check the `CopyDacpacs` target or `None` item; match the name in `DatabaseTests.cs` to the project's output. |
 | Dacpac deploy fails on a reference to `master` or another database | Referenced dacpacs are not next to the deployed one | Copy every `.dacpac` from the database project's output (the generated target does). |
+| `MSB4019` naming `Microsoft.Data.Tools.Schema.SqlTasks.targets` | A classic SSDT `.sqlproj` is referenced; `dotnet` cannot build it | Build it in Visual Studio / MSBuild and regenerate with `--dacpac` (`dacpac.md`). |
+| `CS0246` for `DbAiTestBase` or `TestClass` in a project that is not the test project | The test folder is under another project's folder, which compiles every `.cs` below it | Move the test project to a sibling folder (for example `tests/`). |
 | `SchemaSource cannot be combined with SchemaRoot` | Both are overridden | Override only `SchemaSource` for a dacpac. |
 | `NU1008` (central package management) | `Version` on a `PackageReference` with CPM on | Remove the `Version` attributes; add `<PackageVersion>` items to `Directory.Packages.props`. |
 | Warnings as errors on the generated files (for example `CS1591`) | The repository's `Directory.Build.props` is strict | Add `<NoWarn>$(NoWarn);CS1591</NoWarn>` to the test project, as test projects usually do. |

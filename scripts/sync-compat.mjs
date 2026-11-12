@@ -41,12 +41,28 @@ for (const name of readdirSync(skillsDir)) {
   sync(path.join(skillDir, 'versions.json'), versionsJson);
 
   const text = readFileSync(skillMd, 'utf8');
+  const frontmatter = /^---\n[\s\S]*?\n---\n/.exec(text)?.[0];
   const pattern = /^(\s+dbaitest-version:\s*)"[^"]*"/m;
-  if (!pattern.test(text)) {
-    console.error(`${path.relative(repoRoot, skillMd)}: metadata has no dbaitest-version line.`);
+  if (!frontmatter || !pattern.test(frontmatter)) {
+    console.error(`${path.relative(repoRoot, skillMd)}: frontmatter metadata has no dbaitest-version line.`);
     process.exit(1);
   }
-  sync(skillMd, text.replace(pattern, `$1"${compat.dbaitest}"`));
+  sync(skillMd, frontmatter.replace(pattern, `$1"${compat.dbaitest}"`) + text.slice(frontmatter.length));
+
+  // Prose that names the supported frameworks is not rewritten, only checked, so a compat change
+  // that adds or drops a framework cannot leave it stale.
+  const majors = compat.targetFrameworks.map((tfm) => tfm.slice(3).split('.')[0]);
+  const expectations = [
+    ['SKILL.md', (t) => majors.every((m) => new RegExp(`^compatibility:.*\\b${m}\\b`, 'm').test(t)), `compatibility names .NET ${majors.join(' and ')}`],
+    [path.join('references', 'ci.md'), (t) => majors.every((m) => t.includes(`${m}.0.x`)), `setup-dotnet installs ${majors.map((m) => `${m}.0.x`).join(', ')}`],
+    [path.join('references', 'troubleshooting.md'), (t) => t.includes(`--framework ${compat.targetFrameworks[0]}`), `suggests --framework ${compat.targetFrameworks[0]}`],
+  ];
+  for (const [relative, holds, what] of expectations) {
+    const file = path.join(skillDir, relative);
+    if (existsSync(file) && !holds(readFileSync(file, 'utf8'))) {
+      drift.push(`${path.relative(repoRoot, file)} (by hand: ${what})`);
+    }
+  }
 }
 
 if (drift.length === 0) {

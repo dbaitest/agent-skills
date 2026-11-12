@@ -6,8 +6,10 @@ snapshots every table, view and routine after the schema is applied; `DbAiTestBa
 them after every test and fails the test that changed one:
 
 ```
-[ShapeGuard] CustomerTests.Adds_A_Column left dbo.customers columns changed (id,email) -> (id,email,probe)
+[ShapeGuard] MsSqlCustomerTests.Adds_A_Column left dbo.customers columns changed (id,email) -> (id,email,probe)
 ```
+
+The name is the concrete test class (one per engine) and the test method.
 
 - The culprit is blamed once. An object that is put back is forgotten, so the next test to
   break it is blamed again.
