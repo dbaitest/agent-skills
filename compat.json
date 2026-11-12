@@ -1,0 +1,4 @@
+{
+  "dbaitest": "0.4.0",
+  "targetFrameworks": ["net8.0", "net10.0"]
+}

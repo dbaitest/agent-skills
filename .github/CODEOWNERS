@@ -1,0 +1,6 @@
+# Everyone who touches this repository is expected to go through a pull request.
+# A merge needs one approving review from a code owner, and GitHub does not let
+# you approve your own pull request. Listing both maintainers here is what makes
+# that requirement workable: each one reviews the other's work.
+
+*                       @dbaitest @locd2o

@@ -1,0 +1,14 @@
+# The package has no runtime dependencies; what moves is the SHA-pinned GitHub Actions.
+# A week of bumps arrives as one pull request.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci(deps)
+    groups:
+      actions:
+        patterns: ["*"]

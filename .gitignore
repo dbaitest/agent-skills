@@ -1,0 +1,16 @@
+# Dependencies and packed tarballs
+node_modules/
+*.tgz
+
+# Scaffold output from local runs of the skill's generator
+.scaffold/
+
+# Local agent plans and reports: working notes, never published
+plans/
+
+# Local agent state (Claude Code settings, agent memory): per machine, never published
+.claude/
+
+# Local environment
+.env
+.env.local

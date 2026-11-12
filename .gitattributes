@@ -1,0 +1,6 @@
+# Everything is LF in the repository and in the npm tarball, so a skill installed on Windows
+# carries the same bytes as one installed on Linux, and generated projects do not mix endings.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
