@@ -3,7 +3,7 @@
 // replacement itself is in replace-directory-safely.mjs.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { removeDirectory, replaceDirectory, sweepStaging } from './replace-directory-safely.mjs';
@@ -20,6 +20,9 @@ export class InstallError extends Error {
 
 const PLAIN_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const version = (dir) => readSkill(dir)?.metadata['dbaitest-version'] ?? '?';
+
+/** The path with symbolic links resolved (macOS /var is /private/var), for comparing places. */
+const realPath = (p) => (existsSync(p) ? realpathSync.native(p) : path.resolve(p));
 
 /** Skills shipped in packageSkillsDir. */
 function shippedSkills(packageSkillsDir) {
@@ -101,7 +104,7 @@ export function add({ packageSkillsDir, skills, agents, global, projectDir, home
   }
 
   // A project install is meant to be committed; not when the "project" is the home directory.
-  if (!global && !dryRun && path.resolve(projectDir) !== path.resolve(homeDir)) {
+  if (!global && !dryRun && realPath(projectDir) !== realPath(homeDir)) {
     const relative = targets.map((t) => path.relative(projectDir, t.dir).split(path.sep).join('/'));
     lines.push('', 'Commit these directories so everyone on the project gets the skills:', ...relative.map((r) => `  ${r}`));
     relative.filter((r, i) => ignoredByGit(projectDir, targets[i].dir)).forEach((r) => lines.push(gitignoreAdvice(r)));
@@ -158,10 +161,10 @@ export function list({ projectDir, homeDir }) {
   const seen = new Set();
   for (const global of [false, true]) {
     for (const { dir, agents } of resolveTargets(Object.keys(AGENTS), { global, projectDir, homeDir })) {
-      if (seen.has(dir) || !existsSync(dir)) {
+      if (!existsSync(dir) || seen.has(realPath(dir))) {
         continue; // run from the home directory, project and global are the same place
       }
-      seen.add(dir);
+      seen.add(realPath(dir));
       for (const name of readdirSync(dir).sort()) {
         const skillDir = path.join(dir, name);
         if (isOurs(skillDir)) {
