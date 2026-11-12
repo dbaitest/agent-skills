@@ -1,0 +1,7 @@
+[TestClass]
+public sealed class MySqlCustomerTests : CustomerTests
+{
+    protected override DbEngine CreateEngine() => new MySqlEngine();
+
+    protected override string? SchemaRoot => "Schema/mysql";
+}

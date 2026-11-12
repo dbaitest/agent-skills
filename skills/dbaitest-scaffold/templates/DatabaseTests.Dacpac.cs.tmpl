@@ -1,0 +1,37 @@
+using DbAiTest.Core.Engine;
+using DbAiTest.Core.Schema;
+using DbAiTest.MsSql;
+using DbAiTest.MsSql.Dacpac;
+using DbAiTest.MSTest;
+
+namespace {{Namespace}};
+
+/// <summary>
+/// Tests for the database project, run against its own .dacpac deployed into a throwaway
+/// SQL Server container.
+/// </summary>
+[TestClass]
+public sealed class DatabaseTests : DbAiTestBase
+{
+    protected override DbEngine CreateEngine() => new MsSqlEngine();
+
+    // The .dacpac is copied next to the test binaries by the .csproj (see the CopyDacpacs target
+    // or the None item), together with every .dacpac it references.
+    protected override SchemaSource? SchemaSource =>
+        new DacpacSchemaSource(Path.Join(AppContext.BaseDirectory, "{{DacpacFileName}}"));
+
+    /// <summary>Starts every test from empty tables (identity counters reset too).</summary>
+    [TestInitialize]
+    public async Task ResetAsync()
+    {
+        await Harness.CleanAsync(TestContext.CancellationToken);
+    }
+
+    [TestMethod]
+    public async Task Dacpac_Deploys_Its_Objects()
+    {
+        var objects = await Harness.ListObjectsAsync(TestContext.CancellationToken);
+
+        Assert.IsNotEmpty(objects);
+    }
+}
