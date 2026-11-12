@@ -3,7 +3,7 @@
 // runtime dependency) is not worth it.
 
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 /** The package name every skill this installer ships carries in metadata.source. */
@@ -16,7 +16,8 @@ const unquote = (value) => value.trim().replace(/^(["'])(.*)\1$/, '$2');
  * @returns {{name?: string, metadata: Record<string, string>} | null} null without frontmatter
  */
 export function readFrontmatter(text) {
-  const block = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(text)?.[1];
+  // A byte-order mark (Notepad adds one) must not hide the frontmatter.
+  const block = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(text.replace(/^﻿/, ''))?.[1];
   if (block === undefined) {
     return null;
   }
@@ -48,18 +49,28 @@ export function readSkill(dir) {
 /** True when the directory holds a skill this installer put there. */
 export const isOurs = (dir) => readSkill(dir)?.metadata.source === SOURCE;
 
-/** A digest of every file's relative path and bytes, to tell an installed copy from ours. */
+// Files an OS or a file browser drops into any folder; they are not part of a skill.
+const JUNK = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
+
+/**
+ * A digest of every file's relative path and content, to tell an installed copy from ours.
+ * Line endings are normalised, so a copy committed and checked out with core.autocrlf on
+ * Windows still counts as identical. Symbolic links inside the skill are not followed.
+ */
 export function digestDirectory(dir) {
   const hash = createHash('sha256');
   const walk = (current) => {
-    for (const entry of readdirSync(current).sort()) {
-      const full = path.join(current, entry);
-      if (statSync(full).isDirectory()) {
+    const entries = readdirSync(current, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
         walk(full);
-      } else {
+      } else if (entry.isFile() && !JUNK.has(entry.name)) {
+        const bytes = readFileSync(full);
+        const content = bytes.includes(0) ? bytes : Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'));
         hash.update(path.relative(dir, full).split(path.sep).join('/'));
         hash.update('\0');
-        hash.update(readFileSync(full));
+        hash.update(content);
         hash.update('\0');
       }
     }

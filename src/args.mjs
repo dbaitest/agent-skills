@@ -60,7 +60,7 @@ export function parseCommandLine(argv) {
   }
 
   const requested = (values.agent ?? ['all']).flatMap((a) => a.split(',')).map((a) => a.trim().toLowerCase()).filter(Boolean);
-  const unknown = requested.filter((a) => a !== 'all' && !(a in AGENTS));
+  const unknown = requested.filter((a) => a !== 'all' && !Object.hasOwn(AGENTS, a));
   if (unknown.length > 0 || requested.length === 0) {
     throw new UsageError(`Unknown agent(s): ${unknown.join(', ') || '(none given)'}. Use ${Object.keys(AGENTS).join(', ')} or all.`);
   }

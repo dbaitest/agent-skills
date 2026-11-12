@@ -1,78 +1,76 @@
-// add / remove / list. Every change to a skill directory is a rename of a fully written sibling,
-// so an interrupted run never leaves a half-copied skill that an agent would load.
+// add / remove / list. Each command first works out every change for every target and refuses
+// before touching anything if one of them is not allowed; only then does it write. Directory
+// replacement itself is in replace-directory-safely.mjs.
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
+import { removeDirectory, replaceDirectory, sweepStaging } from './replace-directory-safely.mjs';
 import { digestDirectory, isOurs, readSkill } from './skill-metadata.mjs';
 import { AGENTS, resolveTargets } from './targets.mjs';
 
-/** Thrown for a condition the user must resolve; the CLI prints it and exits 1. */
-export class InstallError extends Error {}
+/** A condition the user must resolve. exitCode 2 marks a bad argument, 1 anything else. */
+export class InstallError extends Error {
+  constructor(message, exitCode = 1) {
+    super(message);
+    this.exitCode = exitCode;
+  }
+}
 
-/** Skill names shipped in packageSkillsDir, or the requested subset (unknown names throw). */
+const PLAIN_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const version = (dir) => readSkill(dir)?.metadata['dbaitest-version'] ?? '?';
+
+/** Skills shipped in packageSkillsDir. */
+function shippedSkills(packageSkillsDir) {
+  return readdirSync(packageSkillsDir).filter((name) => readSkill(path.join(packageSkillsDir, name)) !== null);
+}
+
+/** The requested skills, or every shipped one; an unknown name is a usage error. */
 export function selectSkills(packageSkillsDir, requested) {
-  const available = readdirSync(packageSkillsDir).filter((name) => readSkill(path.join(packageSkillsDir, name)) !== null);
+  const available = shippedSkills(packageSkillsDir);
   const unknown = requested.filter((name) => !available.includes(name));
   if (unknown.length > 0) {
-    throw new InstallError(`Unknown skill(s): ${unknown.join(', ')}. This package has: ${available.join(', ')}.`);
+    throw new InstallError(`Unknown skill(s): ${unknown.join(', ')}. This package has: ${available.join(', ')}.`, 2);
   }
   return requested.length > 0 ? requested : available;
 }
 
-const version = (dir) => readSkill(dir)?.metadata['dbaitest-version'] ?? '?';
-
-/** Copies source to dest via a temporary sibling, replacing dest if it exists. */
-function replaceDirectory(source, dest) {
-  const staging = `${dest}.installing-${process.pid}`;
-  const old = `${dest}.replaced-${process.pid}`;
-  rmSync(staging, { recursive: true, force: true });
-  mkdirSync(path.dirname(dest), { recursive: true });
-  cpSync(source, staging, { recursive: true });
-  if (existsSync(dest)) {
-    renameSync(dest, old);
-  }
-  renameSync(staging, dest);
-  rmSync(old, { recursive: true, force: true });
-}
-
 /** True when git says the path is ignored; false when it is not or git is unavailable. */
 function ignoredByGit(projectDir, target) {
-  const result = spawnSync('git', ['check-ignore', '-q', path.relative(projectDir, target)], { cwd: projectDir });
-  return result.status === 0;
+  return spawnSync('git', ['check-ignore', '-q', path.relative(projectDir, target)], { cwd: projectDir }).status === 0;
 }
 
-/**
- * Installs the skills into every target. Returns the lines to print; throws InstallError when a
- * target holds a copy it must not overwrite.
- */
+/** .gitignore advice for a skills directory git ignores, e.g. ".claude/skills". */
+function gitignoreAdvice(relative) {
+  const [parent] = relative.split('/');
+  return `warning: git ignores ${relative}. To commit it, replace a "${parent}/" line in .gitignore with "${parent}/*" and add "!${relative}/".`;
+}
+
+function refuse(blocked) {
+  throw new InstallError(blocked.join('\n'));
+}
+
+/** Installs the skills into every target. Returns the lines to print. */
 export function add({ packageSkillsDir, skills, agents, global, projectDir, homeDir, force, dryRun }) {
   const names = selectSkills(packageSkillsDir, skills);
   const targets = resolveTargets(agents, { global, projectDir, homeDir });
-  const lines = [];
-  const blocked = [];
 
+  const actions = [];
+  const blocked = [];
   for (const { dir, agents: forAgents } of targets) {
     for (const name of names) {
       const source = path.join(packageSkillsDir, name);
       const dest = path.join(dir, name);
-      const label = `${dest} (${forAgents.join(', ')})`;
-
+      const label = `${name} → ${dest} (${forAgents.join(', ')})`;
       if (!existsSync(dest)) {
-        if (!dryRun) {
-          replaceDirectory(source, dest);
-        }
-        lines.push(`${dryRun ? 'would install' : 'installed'}  ${name} → ${label}`);
+        actions.push({ kind: 'install', source, dest, label });
       } else if (!isOurs(dest)) {
         blocked.push(`${dest} exists and was not installed by @dbaitest/skills; remove or rename it first.`);
       } else if (digestDirectory(dest) === digestDirectory(source)) {
-        lines.push(`up to date  ${name} → ${label}`);
+        actions.push({ kind: 'current', label });
       } else if (force) {
-        if (!dryRun) {
-          replaceDirectory(source, dest);
-        }
-        lines.push(`${dryRun ? 'would replace' : 'replaced'}   ${name} → ${label} (DbAiTest ${version(dest)} → ${version(source)})`);
+        actions.push({ kind: 'replace', source, dest, label, from: version(dest), to: version(source) });
       } else {
         blocked.push(
           `${dest} differs from this version (DbAiTest ${version(dest)} → ${version(source)}): `
@@ -81,44 +79,75 @@ export function add({ packageSkillsDir, skills, agents, global, projectDir, home
       }
     }
   }
-
   if (blocked.length > 0) {
-    throw new InstallError([...lines, ...blocked].join('\n'));
+    refuse(blocked);
   }
 
-  if (!global && !dryRun) {
-    const ignored = targets.map((t) => t.dir).filter((dir) => ignoredByGit(projectDir, dir));
-    lines.push('', 'Commit these directories so everyone on the project gets the skills:');
-    lines.push(...targets.map((t) => `  ${path.relative(projectDir, t.dir) || '.'}`));
-    for (const dir of ignored) {
-      lines.push(`warning: git ignores ${path.relative(projectDir, dir)}; add a "!${path.relative(projectDir, dir).split(path.sep).join('/')}/" exception to .gitignore to commit it.`);
+  const lines = [];
+  if (!dryRun) {
+    targets.forEach((t) => sweepStaging(t.dir));
+  }
+  for (const action of actions) {
+    if (action.kind === 'current') {
+      lines.push(`up to date  ${action.label}`);
+      continue;
     }
+    if (!dryRun) {
+      replaceDirectory(action.source, action.dest);
+    }
+    lines.push(action.kind === 'install'
+      ? `${dryRun ? 'would install' : 'installed'}  ${action.label}`
+      : `${dryRun ? 'would replace' : 'replaced'}  ${action.label} (DbAiTest ${action.from} → ${action.to})`);
+  }
+
+  // A project install is meant to be committed; not when the "project" is the home directory.
+  if (!global && !dryRun && path.resolve(projectDir) !== path.resolve(homeDir)) {
+    const relative = targets.map((t) => path.relative(projectDir, t.dir).split(path.sep).join('/'));
+    lines.push('', 'Commit these directories so everyone on the project gets the skills:', ...relative.map((r) => `  ${r}`));
+    relative.filter((r, i) => ignoredByGit(projectDir, targets[i].dir)).forEach((r) => lines.push(gitignoreAdvice(r)));
   }
   return lines;
 }
 
-/** Removes the named skills (default: every skill this installer owns) from every target. */
-export function remove({ packageSkillsDir, skills, agents, global, projectDir, homeDir, dryRun }) {
-  const requested = skills.length > 0 ? selectSkills(packageSkillsDir, skills) : null;
-  const lines = [];
+/**
+ * Removes skills this installer owns from every target: the named ones, or all of them. A copy
+ * that differs from the one this package ships (edited, or a skill this version no longer
+ * ships) is only removed with --force.
+ */
+export function remove({ packageSkillsDir, skills, agents, global, projectDir, homeDir, force, dryRun }) {
+  const invalid = skills.filter((name) => !PLAIN_NAME.test(name));
+  if (invalid.length > 0) {
+    throw new InstallError(`Not a skill name: ${invalid.join(', ')}.`, 2);
+  }
+  const shipped = shippedSkills(packageSkillsDir);
+
+  const actions = [];
+  const blocked = [];
+  const skipped = [];
   for (const { dir } of resolveTargets(agents, { global, projectDir, homeDir })) {
-    // Without names: every skill in the target this installer owns, including ones a newer
-    // package no longer ships.
-    const names = requested ?? (existsSync(dir) ? readdirSync(dir).filter((name) => isOurs(path.join(dir, name))) : []);
+    const present = existsSync(dir) ? readdirSync(dir) : [];
+    const names = skills.length > 0 ? skills.filter((n) => present.includes(n)) : present.filter((n) => isOurs(path.join(dir, n)));
     for (const name of names) {
       const dest = path.join(dir, name);
-      if (!existsSync(dest)) {
-        continue;
-      }
       if (!isOurs(dest)) {
-        lines.push(`skipped  ${dest}: not installed by @dbaitest/skills`);
-        continue;
+        skipped.push(`skipped  ${dest}: not installed by @dbaitest/skills`);
+      } else if (force || (shipped.includes(name) && digestDirectory(dest) === digestDirectory(path.join(packageSkillsDir, name)))) {
+        actions.push(dest);
+      } else {
+        blocked.push(`${dest} differs from the copy this version ships (edited, or from another version): run again with --force to remove it.`);
       }
-      if (!dryRun) {
-        rmSync(dest, { recursive: true, force: true });
-      }
-      lines.push(`${dryRun ? 'would remove' : 'removed'}  ${dest}`);
     }
+  }
+  if (blocked.length > 0) {
+    refuse(blocked);
+  }
+
+  const lines = [...skipped];
+  for (const dest of actions) {
+    if (!dryRun) {
+      removeDirectory(dest);
+    }
+    lines.push(`${dryRun ? 'would remove' : 'removed'}  ${dest}`);
   }
   return lines.length > 0 ? lines : ['Nothing to remove.'];
 }
@@ -126,11 +155,13 @@ export function remove({ packageSkillsDir, skills, agents, global, projectDir, h
 /** Every skill this installer owns, in the project and in the home directory. */
 export function list({ projectDir, homeDir }) {
   const lines = [];
+  const seen = new Set();
   for (const global of [false, true]) {
     for (const { dir, agents } of resolveTargets(Object.keys(AGENTS), { global, projectDir, homeDir })) {
-      if (!existsSync(dir)) {
-        continue;
+      if (seen.has(dir) || !existsSync(dir)) {
+        continue; // run from the home directory, project and global are the same place
       }
+      seen.add(dir);
       for (const name of readdirSync(dir).sort()) {
         const skillDir = path.join(dir, name);
         if (isOurs(skillDir)) {

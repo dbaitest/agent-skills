@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -162,21 +162,85 @@ describe('add', () => {
     assert.ok(!existsSync(path.join(box.project, '.claude')));
   });
 
-  it('rejects an unknown skill with exit 1 and bad options with exit 2', () => {
+  it('exits 2 for bad arguments and creates nothing', () => {
     const box = sandbox();
-    assert.equal(run(box, 'add', 'no-such-skill').status, 1);
-    assert.equal(run(box, '--agent', 'windsurf').status, 2);
+    for (const args of [['add', 'no-such-skill'], ['add', '../x'], ['--agent', 'windsurf'], ['--agent', 'constructor'], ['--dir', 'missing/deep']]) {
+      const result = run(box, ...args);
+      assert.equal(result.status, 2, `${args.join(' ')}: ${result.stderr}`);
+      assert.doesNotMatch(result.stderr, /\n\s+at /, 'no stack trace');
+    }
+    assert.ok(!existsSync(path.join(box.project, '.claude')));
+    assert.ok(!existsSync(path.join(box.project, 'missing')));
   });
 
-  it('warns when git ignores the target', () => {
+  it('reports the old and the new version when it replaces a copy', () => {
+    const box = sandbox();
+    run(box, 'add', '--agent', 'claude');
+    const file = skill(box.project, '.claude', 'skills');
+    writeFileSync(file, readFileSync(file, 'utf8').replace(/dbaitest-version: "[^"]*"/, 'dbaitest-version: "0.0.1"'));
+
+    const result = run(box, 'add', '--agent', 'claude', '--force');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /replaced .*\(DbAiTest 0\.0\.1 → \d+\.\d+\.\d+\)/);
+  });
+
+  it('changes no target when one of them refuses', () => {
+    const box = sandbox();
+    const foreign = path.join(box.project, '.claude', 'skills', 'dbaitest-scaffold');
+    mkdirSync(foreign, { recursive: true });
+    writeFileSync(path.join(foreign, 'SKILL.md'), '---\nname: dbaitest-scaffold\ndescription: mine\n---\n');
+
+    const result = run(box, 'add');
+    assert.equal(result.status, 1);
+    assert.ok(!existsSync(path.join(box.project, '.agents')), '.agents/skills was not written either');
+  });
+
+  it('treats a copy checked out with CRLF line endings (and OS junk files) as up to date', () => {
+    const box = sandbox();
+    run(box, 'add', '--agent', 'claude');
+    const dir = path.join(box.project, '.claude', 'skills', 'dbaitest-scaffold');
+    const file = path.join(dir, 'SKILL.md');
+    writeFileSync(file, readFileSync(file, 'utf8').replace(/\n/g, '\r\n'));
+    writeFileSync(path.join(dir, 'Thumbs.db'), 'x');
+
+    const result = run(box, 'add', '--agent', 'claude');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /up to date/);
+  });
+
+  it('accepts a SKILL.md saved with a byte-order mark as its own', () => {
+    const box = sandbox();
+    run(box, 'add', '--agent', 'claude');
+    const file = skill(box.project, '.claude', 'skills');
+    writeFileSync(file, `﻿${readFileSync(file, 'utf8')}`);
+    assert.match(run(box, 'list').stdout, /dbaitest-scaffold/);
+  });
+
+  it('leaves no staging copy behind, and sweeps one left by a killed run', () => {
+    const box = sandbox();
+    const leftover = path.join(box.project, '.claude', '.dbaitest-skills-staging', 'dbaitest-scaffold-999', 'new');
+    mkdirSync(leftover, { recursive: true });
+
+    assert.equal(run(box, 'add', '--agent', 'claude').status, 0);
+    assert.ok(!existsSync(path.join(box.project, '.claude', '.dbaitest-skills-staging')));
+    assert.deepEqual(readdirSync(path.join(box.project, '.claude', 'skills')), ['dbaitest-scaffold']);
+  });
+
+  it('warns when git ignores the target, with advice that works', (t) => {
     const box = sandbox();
     if (spawnSync('git', ['init', '-q'], { cwd: box.project }).status !== 0) {
-      return; // no git on this machine
+      t.skip('git is not installed');
+      return;
     }
     writeFileSync(path.join(box.project, '.gitignore'), '.claude/\n');
     const result = run(box, 'add', '--agent', 'claude');
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /warning: git ignores \.claude/);
+    assert.match(result.stdout, /warning: git ignores \.claude\/skills/);
+    assert.match(result.stdout, /"\.claude\/\*" and add "!\.claude\/skills\/"/);
+
+    writeFileSync(path.join(box.project, '.gitignore'), '.claude/*\n!.claude/skills/\n');
+    const check = spawnSync('git', ['check-ignore', '-q', '.claude/skills/dbaitest-scaffold/SKILL.md'], { cwd: box.project });
+    assert.equal(check.status, 1, 'the advised .gitignore lets git see the skill');
   });
 });
 
@@ -200,6 +264,46 @@ describe('list and remove', () => {
     assert.ok(!existsSync(path.join(box.project, '.claude', 'skills', 'dbaitest-scaffold')));
     assert.ok(existsSync(foreign), 'a skill it did not install stays');
     assert.ok(existsSync(skill(box.home, '.agents', 'skills')), 'project remove leaves global alone');
+  });
+
+  it('removes an edited copy only with --force, and --dry-run removes nothing', () => {
+    const box = sandbox();
+    run(box, 'add', '--agent', 'claude');
+    const file = skill(box.project, '.claude', 'skills');
+    appendFileSync(file, '\nlocal edit\n');
+
+    const refused = run(box, 'remove');
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /--force/);
+    assert.ok(existsSync(file));
+
+    assert.match(run(box, 'remove', '--force', '--dry-run').stdout, /would remove/);
+    assert.ok(existsSync(file));
+
+    assert.equal(run(box, 'remove', '--force').status, 0);
+    assert.ok(!existsSync(file));
+  });
+
+  it('removes a named skill this version no longer ships, with --force', () => {
+    const box = sandbox();
+    const old = path.join(box.project, '.agents', 'skills', 'dbaitest-retired');
+    mkdirSync(old, { recursive: true });
+    writeFileSync(path.join(old, 'SKILL.md'), '---\nname: dbaitest-retired\ndescription: x\nmetadata:\n  source: "@dbaitest/skills"\n---\n');
+
+    assert.equal(run(box, 'remove', 'dbaitest-retired').status, 1);
+    assert.equal(run(box, 'remove', 'dbaitest-retired', '--force').status, 0);
+    assert.ok(!existsSync(old));
+  });
+
+  it('lists each location once when run from the home directory', () => {
+    const box = sandbox();
+    run(box, 'add', '--agent', 'claude', '--global');
+    const result = spawnSync(process.execPath, [bin, 'list'], {
+      cwd: box.home,
+      encoding: 'utf8',
+      env: { ...process.env, HOME: box.home, USERPROFILE: box.home },
+    });
+    assert.equal(result.stdout.trim().split('\n').length, 1, result.stdout);
   });
 
   it('says so when nothing is installed', () => {
