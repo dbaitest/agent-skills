@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DACFX_TELEMETRY_OPTOUT: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  # The skills CLI (vercel-labs) sends usage telemetry unless told not to.
+  DISABLE_TELEMETRY: "1"
+
+jobs:
+  # The skills agree with compat.json, and name only DbAiTest APIs that exist in the pinned
+  # release: a renamed type in a skill would make every agent write code that does not compile.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Skills match compat.json
+        run: node scripts/sync-compat.mjs --check
+      - name: Read the pinned DbAiTest release
+        id: compat
+        run: echo "tag=v$(node -p "require('./compat.json').dbaitest")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dbaitest/db-test
+          ref: ${{ steps.compat.outputs.tag }}
+          path: .dbtest
+      - name: Every DbAiTest identifier exists in the pinned release
+        run: node scripts/check-identifiers.mjs --dbtest .dbtest
+
+  # The installer and the generator on every OS and the oldest and current supported Node.
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+
+  # What users get: the skill's own generator writes a project, and it passes against real
+  # containers. Linux only: the hosted Windows and macOS runners do not run Linux containers.
+  scaffold:
+    name: scaffold (${{ matrix.variant }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: mssql
+            args: --engines mssql
+          - variant: postgres
+            args: --engines postgres
+          - variant: mysql
+            args: --engines mysql
+          - variant: all-engines
+            args: ""
+          - variant: postgres-net8.0
+            args: --engines postgres --framework net8.0
+          - variant: mssql-sqlproj
+            args: --schema dacpac --sqlproj test/fixtures/Shop.Database/Shop.Database.sqlproj
+          - variant: mssql-dacpac
+            prebuild: true
+            args: --schema dacpac --dacpac test/fixtures/Shop.Database/bin/Release/Shop.Database.dacpac
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Build the database project fixture
+        if: matrix.prebuild
+        run: dotnet build test/fixtures/Shop.Database --configuration Release
+      - name: Generate the project
+        run: >-
+          node skills/dbaitest-scaffold/scripts/scaffold.mjs
+          --name Generated.Database.Tests
+          --dir "$RUNNER_TEMP/Generated.Database.Tests"
+          ${{ matrix.args }}
+      - name: Run it
+        run: dotnet test "$RUNNER_TEMP/Generated.Database.Tests" --configuration Release
+
+  # The tarball holds only what users need, and installs from npm exactly as from the repository.
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: The package holds exactly the expected files
+        run: node scripts/check-pack.mjs
+      - name: Install from the packed tarball
+        run: |
+          set -euo pipefail
+          npm pack --pack-destination "$RUNNER_TEMP"
+          tarball=$(ls "$RUNNER_TEMP"/dbaitest-skills-*.tgz)
+          mkdir "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project" && git init -q
+          npm exec --yes --package="$tarball" -- dbaitest-skills add
+          test -f .claude/skills/dbaitest-scaffold/SKILL.md
+          test -f .agents/skills/dbaitest-scaffold/scripts/scaffold.mjs
+          npm exec --yes --package="$tarball" -- dbaitest-skills list | grep -q "dbaitest-scaffold"
+          node .agents/skills/dbaitest-scaffold/scripts/scaffold.mjs --name Smoke.Tests --engines postgres --framework net10.0
+
+  # The repository also installs with the vercel-labs skills CLI (`npx skills add dbaitest/agent-skills`).
+  skills-cli:
+    name: skills-cli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install with npx skills
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project" && git init -q
+          npx --yes skills@1.8.1 add "$GITHUB_WORKSPACE" -a codex -a claude-code -y
+          test -f .agents/skills/dbaitest-scaffold/SKILL.md
+          test -f .claude/skills/dbaitest-scaffold/SKILL.md
+          test -f .agents/skills/dbaitest-scaffold/versions.json

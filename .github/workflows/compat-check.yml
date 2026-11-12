@@ -1,0 +1,44 @@
+name: DbAiTest release check
+
+# Once a week, compare the DbAiTest version the skills pin (compat.json) with the latest release on
+# nuget.org, and keep one open issue while the skills are behind. Bumping is deliberate: change
+# compat.json, run scripts/sync-compat.mjs, let CI prove the skills against the new release.
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare with nuget.org
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pinned=$(jq -r .dbaitest compat.json)
+          latest=$(curl --fail --silent --show-error https://api.nuget.org/v3-flatcontainer/dbaitest.core/index.json \
+            | jq -r '[.versions[] | select(test("-") | not)] | last')
+          echo "pinned $pinned, latest $latest"
+          if [ "$pinned" = "$latest" ]; then
+            exit 0
+          fi
+
+          title="Skills pin DbAiTest $pinned; $latest is released"
+          existing=$(gh issue list --state open --search "in:title \"Skills pin DbAiTest\"" --json number,title --jq '.[0].number // empty')
+          body="compat.json pins DbAiTest $pinned; nuget.org has $latest.
+
+          1. Set \`dbaitest\` in compat.json to $latest and run \`node scripts/sync-compat.mjs\`.
+          2. Read the DbAiTest changelog for renamed or removed APIs and update the skills.
+          3. Open a pull request: CI checks every identifier and runs the generated projects against $latest."
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

@@ -14,3 +14,7 @@ plans/
 # Local environment
 .env
 .env.local
+
+# .NET build output of the test fixtures (the repository's own bin/ is the installer)
+test/fixtures/**/bin/
+test/fixtures/**/obj/
