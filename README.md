@@ -8,7 +8,7 @@ Codex, Cursor and GitHub Copilot** with one command.
 
 | Skill | What it does |
 |---|---|
-| `dbaitest-integration-tests` | Scaffolds a new .NET database integration test project on [DbAiTest](https://dbaitest.com/db-test/): one MSTest suite that runs against SQL Server, PostgreSQL and MySQL in throwaway containers. |
+| `dbaitest-scaffold` | Scaffolds a new .NET database integration test project on [DbAiTest](https://dbaitest.com/db-test/): one MSTest suite that runs against SQL Server, PostgreSQL and MySQL in throwaway containers. |
 
 > Work in progress: the skill and the `@dbaitest/skills` installer are not released yet.
 

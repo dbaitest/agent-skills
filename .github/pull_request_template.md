@@ -14,7 +14,7 @@ before/after. "Tests pass" is not evidence on its own; say what proves the chang
 what it claims.
 
     npm test                                        # installer and skill checks
-    node skills/dbaitest-integration-tests/scripts/scaffold.mjs ... && dotnet test
+    node skills/dbaitest-scaffold/scripts/scaffold.mjs ... && dotnet test
 -->
 
 ## Checklist

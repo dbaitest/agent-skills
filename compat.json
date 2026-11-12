@@ -1,4 +1,8 @@
 {
   "dbaitest": "0.4.0",
-  "targetFrameworks": ["net8.0", "net10.0"]
+  "targetFrameworks": ["net8.0", "net10.0"],
+  "packages": {
+    "MSTest": "4.5.2",
+    "Microsoft.NET.Test.Sdk": "18.11.0"
+  }
 }

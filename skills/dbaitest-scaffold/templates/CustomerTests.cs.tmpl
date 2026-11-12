@@ -1,0 +1,34 @@
+using DbAiTest.Core.Engine;
+using DbAiTest.MSTest;
+
+namespace {{Namespace}};
+
+/// <summary>
+/// The tests, written once. No engine name appears here: each engine gets a small
+/// [TestClass] in CustomerTests.Engines.cs that says which engine and where its schema lives.
+/// </summary>
+public abstract class CustomerTests : DbAiTestBase
+{
+    /// <summary>Starts every test from empty tables (identity counters reset too).</summary>
+    [TestInitialize]
+    public async Task ResetAsync()
+    {
+        await Harness.CleanAsync(TestContext.CancellationToken);
+    }
+
+    [TestMethod]
+    public async Task Inserted_Customer_Is_Counted()
+    {
+        await Harness.ExecuteAsync(
+            "INSERT INTO customers (email, display_name) VALUES (@email, @name)",
+            [new DbParameterValue("@email", "ada@example.test"), new DbParameterValue("@name", "Ada")],
+            TestContext.CancellationToken);
+
+        var count = await Harness.QueryScalarAsync<int>(
+            "SELECT COUNT(*) FROM customers WHERE email = @email",
+            [new DbParameterValue("@email", "ada@example.test")],
+            TestContext.CancellationToken);
+
+        Assert.AreEqual(1, count);
+    }
+}
