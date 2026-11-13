@@ -12,5 +12,11 @@
   <ItemGroup>
 {{PackageReferences}}
   </ItemGroup>
+
+  <!-- Every test file uses the harness types (DbEngine, DbParameterValue) and the base class. -->
+  <ItemGroup>
+    <Using Include="DbAiTest.Core.Engine" />
+    <Using Include="DbAiTest.MSTest" />
+  </ItemGroup>
 {{ProjectItems}}
 </Project>

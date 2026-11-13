@@ -27,6 +27,26 @@ function packageReference(id, version, centralPackages) {
 
 /** The ItemGroups/targets that bring the schema next to the test binaries. */
 function projectItems(options) {
+  if (options.schema === 'scripts' && options.schemaDirPath) {
+    const [engine] = options.engines;
+    const dir = options.schemaDirPath;
+    // .psql is PostgreSQL's own extension; build output of projects inside the folder is not schema.
+    const patterns = engine === 'postgres' ? [`${dir}\\**\\*.sql`, `${dir}\\**\\*.psql`] : [`${dir}\\**\\*.sql`];
+    return `
+  <!--
+    The repository's own schema scripts, linked rather than copied so there is one source of
+    truth, and copied next to the test binaries under Schema/${engine} (subfolders kept), where
+    SchemaRoot finds them.
+  -->
+  <ItemGroup>
+    <None Include="${patterns.join(';')}"
+          Exclude="${dir}\\**\\bin\\**;${dir}\\**\\obj\\**"
+          LinkBase="Schema\\${engine}"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+`;
+  }
+
   if (options.schema === 'scripts') {
     return `
   <!-- The schema files, copied next to the test binaries so SchemaRoot can be a relative path. -->
@@ -98,8 +118,9 @@ export function packagesFor(options, versions) {
 /**
  * Computes the files to write.
  * @param {object} options validated options: name, engines, schema, framework, centralPackages,
- *   and for dacpac dacpacFileName plus either sqlprojPath or dacpacPath {directory}; both paths
- *   are already in .csproj form (see csprojPath in project-environment.mjs).
+ *   for an existing script folder schemaDirPath (and excludeDirs), and for dacpac dacpacFileName
+ *   plus either sqlprojPath or dacpacPath {directory}. Paths are already in .csproj form (see
+ *   csprojPath in project-environment.mjs).
  * @param {object} versions the skill's versions.json.
  * @param {(relativePath: string) => string} readTemplate reads a file under templates/.
  * @returns {{path: string, content: string}[]} paths relative to the project directory, '/'-separated.
@@ -138,28 +159,52 @@ export function projectFiles(options, versions, readTemplate) {
     return files;
   }
 
-  const usings = ['DbAiTest.Core.Engine', ...options.engines.map((e) => ENGINES[e].namespace)]
+  // An existing schema gets a smoke-test suite to grow; no schema gets the starter suite and
+  // starter schema files.
+  const existing = Boolean(options.schemaDirPath);
+  const suite = existing ? 'DatabaseTests' : 'CustomerTests';
+  const excluded = options.excludeDirs ?? [];
+  const schemaLoadOptions = excluded.length === 0
+    ? ''
+    : `
+    // Folders under the schema directory that hold data or one-off scripts, not schema.
+    protected override SchemaLoadOptions? SchemaLoadOptions => new()
+    {
+        ExcludedDirectories = [${excluded.map((d) => `"${d.replace(/["\\]/g, '\\$&')}"`).join(', ')}],
+    };
+`;
+
+  // DbAiTest.Core.Engine and DbAiTest.MSTest are global usings in the .csproj.
+  const usings = [
+    ...(excluded.length > 0 ? ['DbAiTest.Core.Schema'] : []),
+    ...options.engines.map((e) => ENGINES[e].namespace),
+  ]
     .sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }))
     .map((ns) => `using ${ns};`)
     .join('\n');
-  const engineClasses = options.engines.map((e) => readTemplate(ENGINES[e].template)).join('\n');
+  const engineClasses = options.engines
+    .map((e) => fill(readTemplate(ENGINES[e].template), { Suite: suite, SchemaLoadOptions: schemaLoadOptions }))
+    .join('\n');
 
   files.push(
-    { path: 'CustomerTests.cs', content: fill(readTemplate('CustomerTests.cs.tmpl'), values) },
+    { path: `${suite}.cs`, content: fill(readTemplate(`${suite}.cs.tmpl`), values) },
     {
-      path: 'CustomerTests.Engines.cs',
-      content: fill(readTemplate('CustomerTests.Engines.cs.tmpl'), {
+      path: `${suite}.Engines.cs`,
+      content: fill(readTemplate('Engines.cs.tmpl'), {
         ...values,
+        Suite: suite,
         Usings: `${usings}\n`,
         EngineClasses: engineClasses.trimEnd(),
       }),
     },
   );
-  for (const engine of options.engines) {
-    files.push({
-      path: `Schema/${engine}/001_tables.sql`,
-      content: readTemplate(`schema/${engine}/001_tables.sql`),
-    });
+  if (!existing) {
+    for (const engine of options.engines) {
+      files.push({
+        path: `Schema/${engine}/001_tables.sql`,
+        content: readTemplate(`schema/${engine}/001_tables.sql`),
+      });
+    }
   }
   return files;
 }

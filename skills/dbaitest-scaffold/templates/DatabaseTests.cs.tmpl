@@ -1,0 +1,24 @@
+namespace {{Namespace}};
+
+/// <summary>
+/// Tests for the existing database schema, written once. No engine name appears here: each
+/// engine gets a small [TestClass] in DatabaseTests.Engines.cs that says which engine and where
+/// its schema lives. Add the tests for the schema's procedures, functions and views here.
+/// </summary>
+public abstract partial class DatabaseTests : DbAiTestBase
+{
+    /// <summary>Starts every test from empty tables (identity counters reset too).</summary>
+    [TestInitialize]
+    public async Task ResetAsync()
+    {
+        await Harness.CleanAsync(TestContext.CancellationToken);
+    }
+
+    [TestMethod]
+    public async Task Schema_Applies_And_Creates_Objects()
+    {
+        var objects = await Harness.ListObjectsAsync(TestContext.CancellationToken);
+
+        Assert.IsNotEmpty(objects);
+    }
+}

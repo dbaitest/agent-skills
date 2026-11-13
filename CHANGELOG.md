@@ -7,6 +7,29 @@ change the installer's behaviour or a skill's generated output, and such changes
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-13
+
+### Breaking
+
+- `scaffold.mjs` requires `--engines` for scripts mode. It no longer generates all three engines
+  when none is given; the skill names the engine the repository uses (discovered) or asks.
+  Upgrade an installed copy with `npx @dbaitest/skills@latest add --force`.
+
+### Added
+
+- **The skill starts from the user's repository.** `scripts/discover.mjs` reads it (never writes
+  or builds) and reports, with evidence, the engine the app uses (packages, connection strings,
+  compose images, SQL dialect) and the database it already has: SDK-style or classic `.sqlproj`
+  files (with built dacpacs) and folders of `.sql` scripts (with the schema subfolder and the
+  seed or one-off folders to leave out).
+- `scaffold.mjs --schema-dir <path>` links an existing script folder into the test project (one
+  source of truth) instead of writing a starter schema, with a `DatabaseTests` smoke suite;
+  `--exclude-dir <name>` writes `SchemaLoadOptions.ExcludedDirectories`.
+- After the smoke test, the agent proposes 3-5 procedures, functions, views or tables to test,
+  the user confirms, and the agent writes the tests. `references/writing-tests.md` holds tested
+  patterns per engine (procedures with output parameters, functions, views, `CALL`, constraint
+  violations); `references/existing-schemas.md` documents discovery and script folders.
+
 ## [0.1.1] - 2026-11-13
 
 ### Changed
@@ -34,6 +57,7 @@ First release.
   copy, treats a CRLF checkout as up to date, and needs `--force` to replace or remove an edited
   copy.
 
-[Unreleased]: https://github.com/dbaitest/agent-skills/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/dbaitest/agent-skills/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dbaitest/agent-skills/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/dbaitest/agent-skills/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dbaitest/agent-skills/releases/tag/v0.1.0

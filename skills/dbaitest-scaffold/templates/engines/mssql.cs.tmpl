@@ -1,7 +1,7 @@
 [TestClass]
-public sealed class MsSqlCustomerTests : CustomerTests
+public sealed class MsSql{{Suite}} : {{Suite}}
 {
     protected override DbEngine CreateEngine() => new MsSqlEngine();
 
     protected override string? SchemaRoot => "Schema/mssql";
-}
+{{SchemaLoadOptions}}}

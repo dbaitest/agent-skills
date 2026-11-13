@@ -14,6 +14,10 @@ Find the symptom, apply the fix, run `dotnet test` again. Change one thing at a 
 | `Table '...Customers' doesn't exist` (MySQL) | Table names are case-sensitive on Linux | Same names, same case, in the schema and the test SQL. |
 | The `.dacpac` was not found | Not copied to the output, or a different file name | Check the `CopyDacpacs` target or `None` item; match the name in `DatabaseTests.cs` to the project's output. |
 | Dacpac deploy fails on a reference to `master` or another database | Referenced dacpacs are not next to the deployed one | Copy every `.dacpac` from the database project's output (the generated target does). |
+| `discover.mjs` reports no engine, or several | The repository has no telling package, connection string or script, or uses more than one database | Ask the user which engine; for several, which database these tests are for. |
+| A script folder's `dialect` is `null` | Plain SQL with no engine-specific marker | Ask the user which engine it is for; do not guess. |
+| `SchemaApplyException` on a file in a linked `--schema-dir` | The file is not schema (seed data, a one-off fix) or needs an earlier file first | Exclude its folder (`--exclude-dir`, `ExcludedDirectories`) or set `OrderedDirectories` (`existing-schemas.md`); do not edit the user's file without asking. |
+| `--engines is required` from `scaffold.mjs` | No engine was given | Pass the engine `discover.mjs` reported, or the one the user chose. |
 | `MSB4019` naming `Microsoft.Data.Tools.Schema.SqlTasks.targets` | A classic SSDT `.sqlproj` is referenced; `dotnet` cannot build it | Build it in Visual Studio / MSBuild and regenerate with `--dacpac` (`dacpac.md`). |
 | `CS0246` for `DbAiTestBase` or `TestClass` in a project that is not the test project | The test folder is under another project's folder, which compiles every `.cs` below it | Move the test project to a sibling folder (for example `tests/`). |
 | `SchemaSource cannot be combined with SchemaRoot` | Both are overridden | Override only `SchemaSource` for a dacpac. |

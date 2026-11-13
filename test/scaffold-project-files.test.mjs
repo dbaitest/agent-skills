@@ -74,7 +74,7 @@ describe('projectFiles (scripts)', () => {
 
     assert.match(files['AssemblyInfo.cs'], /\[assembly: DoNotParallelize\]/);
     assert.match(files['AssemblyInfo.cs'], /DbAiTestRun\.DisposeAllAsync\(\)/);
-    assert.match(files['CustomerTests.cs'], /public abstract class CustomerTests : DbAiTestBase/);
+    assert.match(files['CustomerTests.cs'], /public abstract partial class CustomerTests : DbAiTestBase/);
     assert.match(files['CustomerTests.cs'], /namespace Shop\.Database\.Tests;/);
   });
 
@@ -84,7 +84,13 @@ describe('projectFiles (scripts)', () => {
     assert.match(engines, /class MySqlCustomerTests : CustomerTests/);
     assert.match(engines, /SchemaRoot => "Schema\/mysql"/);
     assert.doesNotMatch(engines, /MsSql|PostgreSql/);
-    assert.match(engines, /^using DbAiTest\.Core\.Engine;\nusing DbAiTest\.MySql;\n/);
+    assert.match(engines, /^using DbAiTest\.MySql;\n/);
+  });
+
+  it('imports the harness types for every test file the agent adds', () => {
+    const csproj = byPath(projectFiles(scripts(), versions, readTemplate))['Shop.Database.Tests.csproj'];
+    assert.match(csproj, /<Using Include="DbAiTest\.Core\.Engine" \/>/);
+    assert.match(csproj, /<Using Include="DbAiTest\.MSTest" \/>/);
   });
 });
 

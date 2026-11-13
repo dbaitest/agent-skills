@@ -1,9 +1,4 @@
 <Project Sdk="Microsoft.Build.Sql/2.3.0">
-
-  <!--
-    A minimal SDK-style database project. CI scaffolds a test project against it in dacpac mode
-    (from the project, and from its built .dacpac) and runs it on SQL Server.
-  -->
   <PropertyGroup>
     <Name>Shop.Database</Name>
     <DSP>Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider</DSP>
@@ -11,5 +6,4 @@
     <IsPackable>false</IsPackable>
     <DacFxTelemetryEnabled>false</DacFxTelemetryEnabled>
   </PropertyGroup>
-
 </Project>

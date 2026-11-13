@@ -38,7 +38,12 @@ describe('exit codes', () => {
     ['an unknown option', ['--name', 'A.B', '--nope']],
     ['a positional argument', ['--name', 'A.B', 'extra']],
     ['a name that is not a namespace', ['--name', '1bad']],
+    ['no --engines for scripts', ['--name', 'A.B']],
     ['an empty --engines', ['--name', 'A.B', '--engines', '']],
+    ['--schema-dir with two engines', ['--name', 'A.B', '--engines', 'mssql,postgres', '--schema-dir', '.']],
+    ['--schema-dir without .sql files', ['--name', 'A.B', '--engines', 'postgres', '--schema-dir', '.']],
+    ['--exclude-dir without --schema-dir', ['--name', 'A.B', '--engines', 'postgres', '--exclude-dir', 'seed']],
+    ['--schema-dir with dacpac', ['--name', 'A.B', '--schema', 'dacpac', '--dacpac', 'x.dacpac', '--schema-dir', '.']],
     ['an unknown engine', ['--name', 'A.B', '--engines', 'oracle']],
     ['dacpac without a source', ['--name', 'A.B', '--schema', 'dacpac']],
     ['dacpac on postgres', ['--name', 'A.B', '--schema', 'dacpac', '--engines', 'postgres', '--dacpac', 'x.dacpac']],
@@ -73,15 +78,15 @@ describe('exit codes', () => {
     const cwd = workspace();
     mkdirSync(path.join(cwd, 'X'));
     writeFileSync(path.join(cwd, 'X', 'keep.txt'), 'mine');
-    assert.equal(scaffold(cwd, '--name', 'A.B', '--dir', 'X').status, 1);
-    assert.equal(scaffold(cwd, '--name', 'A.B', '--dir', 'X', '--force').status, 0);
+    assert.equal(scaffold(cwd, '--name', 'A.B', '--engines', 'postgres', '--dir', 'X').status, 1);
+    assert.equal(scaffold(cwd, '--name', 'A.B', '--engines', 'postgres', '--dir', 'X', '--force').status, 0);
     assert.equal(readFileSync(path.join(cwd, 'X', 'keep.txt'), 'utf8'), 'mine');
   });
 
   it('exits 1 cleanly when --dir is a file', () => {
     const cwd = workspace();
     writeFileSync(path.join(cwd, 'X'), '');
-    const result = scaffold(cwd, '--name', 'A.B', '--dir', 'X');
+    const result = scaffold(cwd, '--name', 'A.B', '--engines', 'postgres', '--dir', 'X');
     assert.equal(result.status, 1);
     assert.match(result.stderr, /not a directory/);
   });
@@ -135,5 +140,84 @@ describe('output', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /<PackageVersion Include="DbAiTest\.PostgreSql" Version="\d+\.\d+\.\d+" \/>/);
     assert.doesNotMatch(readFileSync(path.join(cwd, 'A.B', 'A.B.csproj'), 'utf8'), /Version=/);
+  });
+});
+
+describe('existing schema folders', () => {
+  const fixtures = path.resolve(path.dirname(script), '../../../test/fixtures/repos');
+
+  it('links the folder instead of writing a starter schema, with a smoke-test suite', () => {
+    const cwd = path.join(fixtures, 'scripts-postgres');
+    const dir = path.join(workspace(), 'Billing.Database.Tests');
+    const result = scaffold(cwd, '--name', 'Billing.Database.Tests', '--dir', dir, '--engines', 'postgres', '--schema-dir', 'db/schema');
+    assert.equal(result.status, 0, result.stderr);
+
+    const csproj = readFileSync(path.join(dir, 'Billing.Database.Tests.csproj'), 'utf8');
+    const linked = /<None Include="([^"]*)"/.exec(csproj)[1].split(';');
+    assert.equal(linked.length, 2, linked.join(';'));
+    assert.ok(linked[0].endsWith(String.raw`db\schema\**\*.sql`), linked[0]);
+    assert.ok(linked[1].endsWith(String.raw`db\schema\**\*.psql`), linked[1]);
+    assert.ok(csproj.includes(String.raw`LinkBase="Schema\postgres"`), csproj);
+    assert.ok(!existsSync(path.join(dir, 'Schema')), 'no starter schema');
+    assert.match(readFileSync(path.join(dir, 'DatabaseTests.cs'), 'utf8'), /public abstract partial class DatabaseTests : DbAiTestBase/);
+    const engines = readFileSync(path.join(dir, 'DatabaseTests.Engines.cs'), 'utf8');
+    assert.match(engines, /class PostgreSqlDatabaseTests : DatabaseTests/);
+    assert.doesNotMatch(engines, /SchemaLoadOptions/);
+  });
+
+  it('writes SchemaLoadOptions for excluded folders', () => {
+    const cwd = path.join(fixtures, 'scripts-postgres');
+    const dir = path.join(workspace(), 'Billing.Database.Tests');
+    const result = scaffold(cwd, '--name', 'Billing.Database.Tests', '--dir', dir, '--engines', 'postgres', '--schema-dir', 'db', '--exclude-dir', 'seed');
+    assert.equal(result.status, 0, result.stderr);
+
+    const engines = readFileSync(path.join(dir, 'DatabaseTests.Engines.cs'), 'utf8');
+    assert.match(engines, /using DbAiTest\.Core\.Schema;/);
+    assert.match(engines, /ExcludedDirectories = \["seed"\]/);
+  });
+
+  it('rejects an exclusion that is a path', () => {
+    const cwd = path.join(fixtures, 'scripts-postgres');
+    const result = scaffold(cwd, '--name', 'A.B', '--dir', path.join(workspace(), 'X'), '--engines', 'postgres', '--schema-dir', 'db', '--exclude-dir', 'seed/x');
+    assert.equal(result.status, 2);
+  });
+
+  it('rejects an exclusion that names no folder, and accepts one with a space', () => {
+    const cwd = workspace();
+    mkdirSync(path.join(cwd, 'db', 'Seed Data'), { recursive: true });
+    writeFileSync(path.join(cwd, 'db', 'a.sql'), 'CREATE TABLE t (id INT);');
+    const base = ['--name', 'A.B', '--dir', 'tests/A.B', '--engines', 'mysql', '--schema-dir', 'db'];
+    assert.equal(scaffold(cwd, ...base, '--exclude-dir', 'sede').status, 2);
+    assert.equal(scaffold(cwd, ...base, '--exclude-dir', 'Seed Data').status, 0);
+  });
+
+  it('refuses a test project inside its own schema folder', () => {
+    const cwd = workspace();
+    mkdirSync(path.join(cwd, 'db'));
+    writeFileSync(path.join(cwd, 'db', 'a.sql'), 'CREATE TABLE t (id INT);');
+    const result = scaffold(cwd, '--name', 'A.B', '--dir', 'db/tests', '--engines', 'mysql', '--schema-dir', 'db');
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /inside --schema-dir/);
+  });
+
+  it('leaves other projects\' build output out of the linked schema, and .psql to PostgreSQL', () => {
+    const cwd = workspace();
+    mkdirSync(path.join(cwd, 'db'));
+    writeFileSync(path.join(cwd, 'db', 'a.sql'), 'CREATE TABLE t (id INT);');
+    assert.equal(scaffold(cwd, '--name', 'A.B', '--dir', 'tests/A.B', '--engines', 'mssql', '--schema-dir', 'db').status, 0);
+    const csproj = readFileSync(path.join(cwd, 'tests', 'A.B', 'A.B.csproj'), 'utf8');
+    assert.ok(csproj.includes(String.raw`Exclude="..\..\db\**\bin\**;..\..\db\**\obj\**"`), csproj);
+    assert.ok(!csproj.includes('.psql'), 'SQL Server does not read .psql files');
+  });
+});
+
+describe('database project names', () => {
+  it('uses the SqlTargetName the project builds its dacpac under', () => {
+    const cwd = workspace();
+    mkdirSync(path.join(cwd, 'db'));
+    writeFileSync(path.join(cwd, 'db', 'Shop.Database.sqlproj'), '<Project Sdk="Microsoft.Build.Sql"><PropertyGroup><SqlTargetName>Shop</SqlTargetName></PropertyGroup></Project>');
+    const result = scaffold(cwd, '--name', 'A.B', '--schema', 'dacpac', '--sqlproj', 'db/Shop.Database.sqlproj');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(path.join(cwd, 'A.B', 'DatabaseTests.cs'), 'utf8'), /"Shop\.dacpac"/);
   });
 });

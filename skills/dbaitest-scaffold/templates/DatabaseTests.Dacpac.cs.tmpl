@@ -1,8 +1,6 @@
-using DbAiTest.Core.Engine;
 using DbAiTest.Core.Schema;
 using DbAiTest.MsSql;
 using DbAiTest.MsSql.Dacpac;
-using DbAiTest.MSTest;
 
 namespace {{Namespace}};
 
@@ -11,7 +9,7 @@ namespace {{Namespace}};
 /// SQL Server container.
 /// </summary>
 [TestClass]
-public sealed class DatabaseTests : DbAiTestBase
+public sealed partial class DatabaseTests : DbAiTestBase
 {
     protected override DbEngine CreateEngine() => new MsSqlEngine();
 
