@@ -21,6 +21,10 @@ with identity counters reset. Pass `TestContext.CancellationToken` to every call
 
 ## Harness calls
 
+The generated `.csproj` imports `DbAiTest.Core.Engine` (`DbParameterValue`, `DbEngine`) and
+`DbAiTest.MSTest` for every file, so new test files need no `using` for them; add driver
+namespaces (`Microsoft.Data.SqlClient`, `System.Data`, `System.Data.Common`) where used.
+
 ```csharp
 await Harness.ExecuteAsync(sql, [new DbParameterValue("@email", "ada@example.test")], TestContext.CancellationToken);
 var count = await Harness.QueryScalarAsync<int>(sql, [new DbParameterValue("@id", id)], TestContext.CancellationToken);

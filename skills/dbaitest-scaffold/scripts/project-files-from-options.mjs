@@ -171,8 +171,8 @@ export function projectFiles(options, versions, readTemplate) {
     };
 `;
 
+  // DbAiTest.Core.Engine and DbAiTest.MSTest are global usings in the .csproj.
   const usings = [
-    'DbAiTest.Core.Engine',
     ...(excluded.length > 0 ? ['DbAiTest.Core.Schema'] : []),
     ...options.engines.map((e) => ENGINES[e].namespace),
   ]
