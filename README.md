@@ -81,6 +81,7 @@ the projects with the skill's own script and runs them against real containers o
 
 | `@dbaitest/skills` | DbAiTest | Target frameworks |
 |---|---|---|
+| 0.2.x | 0.4.0 | net8.0, net10.0 |
 | 0.1.x | 0.4.0 | net8.0, net10.0 |
 
 ## License

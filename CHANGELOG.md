@@ -7,6 +7,8 @@ change the installer's behaviour or a skill's generated output, and such changes
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-13
+
 ### Breaking
 
 - `scaffold.mjs` requires `--engines` for scripts mode. It no longer generates all three engines
@@ -55,6 +57,7 @@ First release.
   copy, treats a CRLF checkout as up to date, and needs `--force` to replace or remove an edited
   copy.
 
-[Unreleased]: https://github.com/dbaitest/agent-skills/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/dbaitest/agent-skills/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dbaitest/agent-skills/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/dbaitest/agent-skills/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dbaitest/agent-skills/releases/tag/v0.1.0
