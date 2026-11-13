@@ -76,6 +76,16 @@ export function isSdkStyleSqlproj(text) {
 }
 
 /**
+ * The .dacpac file name a database project builds: SqlTargetName (Microsoft.Build.Sql honours
+ * it), else TargetName, else the project file name.
+ */
+export function dacpacNameOf(sqlprojPath, text) {
+  const xml = withoutComments(text);
+  const target = /<SqlTargetName>\s*([^<\s]+)\s*</i.exec(xml)?.[1] ?? /<TargetName>\s*([^<\s]+)\s*</i.exec(xml)?.[1];
+  return `${target ?? path.basename(sqlprojPath, path.extname(sqlprojPath))}.dacpac`;
+}
+
+/**
  * A path written into a .csproj item: relative to the project when possible, backslashes,
  * MSBuild special characters escaped (%XX) and then XML-escaped for an attribute value.
  */

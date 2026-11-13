@@ -5,7 +5,7 @@ namespace {{Namespace}};
 /// engine gets a small [TestClass] in DatabaseTests.Engines.cs that says which engine and where
 /// its schema lives. Add the tests for the schema's procedures, functions and views here.
 /// </summary>
-public abstract class DatabaseTests : DbAiTestBase
+public abstract partial class DatabaseTests : DbAiTestBase
 {
     /// <summary>Starts every test from empty tables (identity counters reset too).</summary>
     [TestInitialize]

@@ -38,11 +38,15 @@ node <skill-dir>/scripts/discover.mjs
 It reads the repository (it never writes or builds) and prints JSON. Read
 `references/existing-schemas.md` for every field. In short:
 
-- `engine`: the one engine the app uses, or `null` when there is none or several; `engines` lists
-  each with its `evidence` (package, connection string, compose image, SQL dialect, database project).
+- `engine`: the one supported engine the app uses, or `null` when there is none, several, or an
+  unsupported one too; `confident` is true when a package or a database project backs it.
+  `engines` lists each candidate with its `evidence`; `unsupported` lists engines DbAiTest does
+  not test (SQLite, Oracle).
 - `sqlprojs`: database projects, `sdkStyle` or classic, with `dacpacName` and any `builtDacpacs`.
 - `scriptFolders`: folders of `.sql` files outside projects and tests, with `dialect`,
-  `schemaDir` (where the schema itself is) and `excludeFromSchemaDir` (seed/one-off subfolders).
+  `schemaDir` (where the schema itself is; `null` for files at the repository root) and
+  `excludeFromSchemaDir` (seed, one-off or migration subfolders), plus two warnings:
+  `versionedMigrations` and `possibleSeparateDatabases`.
 - `testsFolder`, `solution`, `centralPackages`.
 
 Tell the user in two or three lines what you found and the evidence for the engine.
@@ -50,7 +54,8 @@ Tell the user in two or three lines what you found and the evidence for the engi
 ## 3. Decide (ask only what discovery leaves open)
 
 1. **Engine.** `engine` set → use it and say so. `null` with several candidates → ask which one;
-   none at all → ask. Never default to every engine.
+   none at all → ask. Never default to every engine. Anything in `unsupported` → tell the user
+   DbAiTest tests SQL Server, PostgreSQL and MySQL only, and stop unless they want one of those.
 2. **Schema source**, first match wins:
    - an SDK-style `.sqlproj` → `--schema dacpac --sqlproj <path>` (SQL Server);
    - a classic `.sqlproj` → `--schema dacpac --dacpac <builtDacpacs[0]>` if it has been built,
@@ -58,13 +63,16 @@ Tell the user in two or three lines what you found and the evidence for the engi
    - a script folder in the engine's dialect → `--schema-dir <schemaDir>` plus one
      `--exclude-dir <name>` per entry of `excludeFromSchemaDir`;
    - nothing → the starter schema (no `--schema-dir`); the user fills it in later.
-   Several candidates (two database projects, two script folders) → ask which one.
+   Ask instead when: there are several candidates; a folder's `schemaDir` is `null` (scripts at the
+   repository root: ask which folder holds the schema); `possibleSeparateDatabases` lists folders
+   (ask which database); `versionedMigrations` is true (not supported yet, see
+   `references/existing-schemas.md`).
 3. **Name and location.** Name: `<SolutionOrRepo>.Database.Tests`. Location: `<testsFolder>/<name>`,
    else `tests/<name>`. It must not sit under a folder that holds another `*.csproj` (that project
-   would compile the tests); pick a sibling folder if it would.
+   would compile the tests) or inside the schema folder; pick a sibling folder if it would.
 
-Confirm the plan in one message (engine, schema source, project location) unless everything came
-from discovery without ambiguity; then go ahead.
+Confirm the plan in one message (engine, schema source, project location) unless `confident` is
+true and nothing above was ambiguous; then go ahead.
 
 ## 4. Generate
 

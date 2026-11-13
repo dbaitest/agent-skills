@@ -38,6 +38,7 @@ the first row; `NULL` or no row gives `default`.
 
 A stored procedure with an output parameter, asserted through the table and a view:
 
+<!-- snippet: sqlproj-shop -->
 ```csharp
 using System.Data;
 using Microsoft.Data.SqlClient;
@@ -76,6 +77,7 @@ function: `SELECT dbo.TaxFor(@amount)` with `QueryScalarAsync`.
 
 A function, seeded through its tables (`RETURNING` gives the id in one statement):
 
+<!-- snippet: scripts-postgres -->
 ```csharp
 [TestMethod]
 public async Task Invoice_Total_Sums_Its_Lines()
@@ -105,6 +107,7 @@ function: `SELECT COUNT(*) FROM list_things(@x)`, or read it through `OpenConnec
 
 A procedure through `CALL`, asserted on the table it changes:
 
+<!-- snippet: scripts-mysql -->
 ```csharp
 [TestMethod]
 public async Task Receive_Stock_Adds_To_An_Existing_Product()
@@ -124,15 +127,26 @@ Output parameters: open a connection and use a `MySqlConnector.MySqlCommand` wit
 
 ## Constraints and rejections (every engine)
 
+Seed **before** the assertion, so the only statement that may throw is the one under test (a
+seed that fails inside the asserted call would make the test pass for the wrong reason), and
+check that nothing was written:
+
+<!-- snippet: sqlproj-shop -->
 ```csharp
 using System.Data.Common;
 
 [TestMethod]
-public async Task Order_Amount_Must_Be_Positive()
+public async Task Orders_Reject_A_Non_Positive_Amount()
 {
+    var customerId = await Harness.QueryScalarAsync<int>(
+        "INSERT INTO dbo.Customers (Email, DisplayName) OUTPUT INSERTED.Id VALUES (@email, @email)",
+        [new DbParameterValue("@email", "ada@example.test")], TestContext.CancellationToken);
+
     await Assert.ThrowsAsync<DbException>(() => Harness.ExecuteAsync(
-        "INSERT INTO orders (customer_id, amount) VALUES (@customer, 0)",
-        [new DbParameterValue("@customer", await SeedCustomerAsync())], TestContext.CancellationToken));
+        "INSERT INTO dbo.Orders (CustomerId, Amount) VALUES (@customer, 0)",
+        [new DbParameterValue("@customer", customerId)], TestContext.CancellationToken));
+
+    Assert.AreEqual(0, await Harness.QueryScalarAsync<int>("SELECT COUNT(*) FROM dbo.Orders", TestContext.CancellationToken));
 }
 ```
 

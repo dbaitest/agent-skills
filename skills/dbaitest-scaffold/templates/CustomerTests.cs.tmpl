@@ -4,7 +4,7 @@ namespace {{Namespace}};
 /// The tests, written once. No engine name appears here: each engine gets a small
 /// [TestClass] in CustomerTests.Engines.cs that says which engine and where its schema lives.
 /// </summary>
-public abstract class CustomerTests : DbAiTestBase
+public abstract partial class CustomerTests : DbAiTestBase
 {
     /// <summary>Starts every test from empty tables (identity counters reset too).</summary>
     [TestInitialize]

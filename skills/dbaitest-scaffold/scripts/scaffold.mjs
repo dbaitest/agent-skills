@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { csprojPath, detectFramework, isSdkStyleSqlproj, usesCentralPackages } from './project-environment.mjs';
+import { csprojPath, dacpacNameOf, detectFramework, isSdkStyleSqlproj, usesCentralPackages } from './project-environment.mjs';
 import { ENGINES, packagesFor, projectFiles } from './project-files-from-options.mjs';
 
 const skillRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,8 +31,8 @@ const USAGE = `Usage: node scaffold.mjs --name <Project.Name> [options]   (run f
                          dacpac: deploy a SQL Server .dacpac (SQL Server only).
   --schema-dir <path>    With scripts and one engine: the repository's existing schema folder,
                          linked into the project instead of a starter schema.
-  --exclude-dir <name>   With --schema-dir: a subfolder that is not schema (seed data, one-off
-                         scripts); repeatable.
+  --exclude-dir <name>   With --schema-dir: a folder name (at any depth) that is not schema, such as
+                         seed data or one-off scripts; repeatable.
   --sqlproj <path>       With --schema dacpac: an SDK-style database project to build and deploy.
   --dacpac <path>        With --schema dacpac: a prebuilt .dacpac to deploy instead.
   --framework <tfm>      ${versions.targetFrameworks.join(' | ')} (default: newest the SDK in effect there can build).
@@ -40,6 +40,12 @@ const USAGE = `Usage: node scaffold.mjs --name <Project.Name> [options]   (run f
   --help                 Show this text.`;
 
 export class UsageError extends Error {}
+
+/** True when a directory holds a folder of this name at any depth. */
+function containsDirectoryNamed(dir, name) {
+  return readdirSync(dir, { withFileTypes: true }).some((entry) => entry.isDirectory()
+    && (entry.name.toLowerCase() === name.toLowerCase() || containsDirectoryNamed(path.join(dir, entry.name), name)));
+}
 
 /** True when a directory holds a .sql or .psql file at any depth. */
 function containsSql(dir) {
@@ -120,9 +126,22 @@ export function parseOptions(argv, { cwd = process.cwd(), framework = detectFram
     if (!existsSync(schemaDir) || !statSync(schemaDir).isDirectory() || !containsSql(schemaDir)) {
       throw new UsageError(`--schema-dir must be a directory holding .sql files: ${schemaDir}`);
     }
-    const badExclusion = excludeDirs.find((d) => !/^[\w.-]+$/.test(d));
+    const within = (child, parent) => {
+      const relative = path.relative(parent, child);
+      return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+    };
+    if (within(projectDir, schemaDir)) {
+      // The project's own bin/ would match the schema glob and nest a copy on every build.
+      throw new UsageError(`--dir ${projectDir} is inside --schema-dir ${schemaDir}: put the test project beside the schema folder.`);
+    }
+    const badExclusion = excludeDirs.find((d) => !/^[\w. -]+$/.test(d) || d.trim() !== d);
     if (badExclusion !== undefined) {
       throw new UsageError(`--exclude-dir takes a folder name, not a path: ${badExclusion}`);
+    }
+    // DbAiTest excludes a folder of that name at any depth under the schema folder.
+    const missing = excludeDirs.find((d) => !containsDirectoryNamed(schemaDir, d));
+    if (missing !== undefined) {
+      throw new UsageError(`--exclude-dir ${missing}: no folder of that name under ${schemaDir}.`);
     }
     return { ...options, schemaDirPath: csprojPath(projectDir, schemaDir), excludeDirs };
   }
@@ -151,8 +170,7 @@ export function parseOptions(argv, { cwd = process.cwd(), framework = detectFram
         + 'Build it in Visual Studio or with MSBuild, then pass the .dacpac it produces with --dacpac.',
       );
     }
-    // An SDK-style database project builds <project file name>.dacpac by default.
-    options.dacpacFileName = `${path.basename(source, path.extname(source))}.dacpac`;
+    options.dacpacFileName = dacpacNameOf(source, readFileSync(source, 'utf8'));
     options.sqlprojPath = csprojPath(projectDir, source);
   } else {
     options.dacpacFileName = path.basename(source); // keep its case: Linux file systems are case-sensitive

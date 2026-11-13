@@ -34,23 +34,50 @@ describe('repository signals', () => {
     assert.deepEqual(engines('Dapper'), []);
   });
 
+  it('maps hosting, migration and test-container packages, and engines DbAiTest does not support', () => {
+    const engines = (pkg) => enginesFromProjectFile(`<PackageReference Include="${pkg}" Version="1" />`).map((e) => e.engine);
+    assert.deepEqual(engines('Aspire.Hosting.PostgreSQL'), ['postgres']);
+    assert.deepEqual(engines('Microsoft.EntityFrameworkCore.SqlServer.NetTopologySuite'), ['mssql']);
+    assert.deepEqual(engines('dbup-mysql'), ['mysql']);
+    assert.deepEqual(engines('Testcontainers.MsSql'), ['mssql']);
+    assert.deepEqual(engines('Microsoft.EntityFrameworkCore.Sqlite'), ['sqlite']);
+    assert.deepEqual(engines('Oracle.ManagedDataAccess.Core'), ['oracle']);
+  });
+
   it('reads connection strings and container images', () => {
-    const engines = (text) => enginesFromConfigText(text).map((e) => e.engine);
+    const engines = (text) => [...new Set(enginesFromConfigText(text).map((e) => e.engine))];
     assert.deepEqual(engines('"Server=.;Database=x;Trusted_Connection=True"'), ['mssql']);
     assert.deepEqual(engines('"Host=db;Port=5432;Database=x;Username=y"'), ['postgres']);
     assert.deepEqual(engines('image: postgres:17'), ['postgres']);
+    assert.deepEqual(engines('image: bitnami/postgresql:16'), ['postgres']);
+    assert.deepEqual(engines('image: pgvector/pgvector:pg16'), ['postgres']);
     assert.deepEqual(engines('image: mysql:8.4'), ['mysql']);
     assert.deepEqual(engines('image: mcr.microsoft.com/mssql/server:2022-latest'), ['mssql']);
     assert.deepEqual(engines('"Server=db;Database=x;User Id=a;Password=b"'), [], 'ambiguous strings are not evidence');
   });
 
+  it('does not take SQLite, Oracle or a shared keyword for SQL Server', () => {
+    const engines = (text) => [...new Set(enginesFromConfigText(text).map((e) => e.engine))];
+    assert.deepEqual(engines('"Data Source=app.db;Cache=Shared"'), ['sqlite']);
+    assert.deepEqual(engines('"Data Source=ORCL;User Id=a;Password=b"'), []);
+    assert.deepEqual(engines('"Host=db;Database=x;Username=y;TrustServerCertificate=true"'), ['postgres']);
+  });
+
+  it('never repeats a password in its evidence', () => {
+    const evidence = enginesFromConfigText('"Host=db;Username=app;Password=Sup3rS3cret!;Database=billing"');
+    assert.ok(evidence.length > 0);
+    assert.ok(evidence.every((e) => !e.signal.includes('Sup3rS3cret') && !/password/i.test(e.signal)), JSON.stringify(evidence));
+  });
+
   it('recognises test projects', () => {
     assert.equal(isTestProject('<PackageReference Include="MSTest" Version="4" />'), true);
-    assert.equal(isTestProject('<PackageReference Include="xunit" Version="2" />'), true);
+    assert.equal(isTestProject('<PackageReference Include="xunit.v3" Version="1" />'), true);
+    assert.equal(isTestProject('<Project Sdk="MSTest.Sdk/3.6.0">'), true);
     assert.equal(isTestProject('<PackageReference Include="Npgsql" Version="10" />'), false);
   });
 
   it('tells the three dialects apart and refuses to guess on plain SQL', () => {
+    assert.equal(dialectOf(dialectScores('CREATE TABLE t (id SERIAL PRIMARY KEY, n TEXT);')), 'postgres');
     assert.equal(dialectOf(dialectScores('CREATE TABLE dbo.t (id INT IDENTITY(1,1));\nGO\n')), 'mssql');
     assert.equal(dialectOf(dialectScores('CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END; $$;')), 'postgres');
     assert.equal(dialectOf(dialectScores('DELIMITER //\nCREATE TABLE t (id INT AUTO_INCREMENT) ENGINE=InnoDB //')), 'mysql');
@@ -136,6 +163,71 @@ describe('discover on edge cases', () => {
     const report = discover(dir, noSdk);
     assert.deepEqual(report.sqlprojs, [{ path: 'Db/Db.sqlproj', sdkStyle: false, dacpacName: 'Db.dacpac', builtDacpacs: ['Db/bin/Release/Db.dacpac'] }]);
     assert.deepEqual(report.scriptFolders, []);
+  });
+
+  it('reports an engine DbAiTest does not support and leaves the engine open', () => {
+    const dir = repo('sqlite', {
+      'App/App.csproj': '<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9" />',
+      'App/appsettings.json': '{ "ConnectionStrings": { "Db": "Data Source=app.db" } }',
+    });
+    const report = discover(dir, noSdk);
+    assert.equal(report.engine, null);
+    assert.deepEqual(report.engines, []);
+    assert.deepEqual(report.unsupported.map((e) => e.engine), ['sqlite']);
+  });
+
+  it('is confident only with a package or a database project behind the engine', () => {
+    const configOnly = discover(repo('config-only', { 'appsettings.json': '"Host=db;Database=x"' }), noSdk);
+    assert.equal(configOnly.engine, 'postgres');
+    assert.equal(configOnly.confident, false);
+    assert.equal(discover(path.join(fixtures, 'scripts-postgres'), noSdk).confident, true);
+  });
+
+  it('never suggests the repository root as the schema folder', () => {
+    const report = discover(repo('root-sql', { 'schema.sql': 'CREATE TABLE t (id SERIAL);' }), noSdk);
+    assert.equal(report.scriptFolders.length, 1);
+    assert.equal(report.scriptFolders[0].schemaDir, null);
+  });
+
+  it('splits engine folders and flags separate databases under one schema folder', () => {
+    const engines = discover(repo('per-engine', {
+      'sql/postgres/1.sql': 'CREATE TABLE t (id SERIAL); CREATE FUNCTION f() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;',
+      'sql/mssql/1.sql': 'CREATE TABLE dbo.t (id INT IDENTITY(1,1));\nGO\n',
+    }), noSdk);
+    assert.deepEqual(engines.scriptFolders.map((f) => [f.path, f.dialect]).sort(), [['sql/mssql', 'mssql'], ['sql/postgres', 'postgres']]);
+
+    const two = discover(repo('two-databases', {
+      'database/Billing/1.sql': 'CREATE TABLE invoices (id SERIAL);',
+      'database/Shop/1.sql': 'CREATE TABLE orders (id SERIAL);',
+    }), noSdk);
+    assert.deepEqual(two.scriptFolders[0].possibleSeparateDatabases, ['Billing', 'Shop']);
+
+    const layered = discover(repo('object-folders', {
+      'database/tables/1.sql': 'CREATE TABLE a (id SERIAL);',
+      'database/views/1.sql': 'CREATE VIEW v AS SELECT 1;',
+    }), noSdk);
+    assert.deepEqual(layered.scriptFolders[0].possibleSeparateDatabases, []);
+  });
+
+  it('flags versioned migrations and leaves migrations out beside a schema folder', () => {
+    const flyway = discover(repo('flyway', { 'db/V1__init.sql': 'CREATE TABLE t (id SERIAL);', 'db/V10__more.sql': 'ALTER TABLE t ADD n INT;' }), noSdk);
+    assert.equal(flyway.scriptFolders[0].versionedMigrations, true);
+
+    const both = discover(repo('schema-and-migrations', {
+      'db/schema/1.sql': 'CREATE TABLE t (id SERIAL);',
+      'db/migrations/2.sql': 'ALTER TABLE t ADD n INT;',
+      'db/seed/3.sql': 'INSERT INTO t DEFAULT VALUES;',
+    }), noSdk);
+    assert.deepEqual(both.scriptFolders[0].suggestedExclusions, ['migrations', 'seed']);
+    assert.equal(both.scriptFolders[0].schemaDir, 'db/schema');
+  });
+
+  it('is not blinded by thousands of unrelated files', () => {
+    const files = { 'src/App/App.csproj': '<PackageReference Include="Npgsql" Version="1" />', 'db/a.sql': 'CREATE TABLE t (id SERIAL);' };
+    for (let i = 0; i < 300; i++) files[`assets/img${i}.png`] = '';
+    const report = discover(repo('assets', files), noSdk);
+    assert.equal(report.engine, 'postgres');
+    assert.equal(report.truncated, false);
   });
 
   it('runs as a command and prints JSON', () => {

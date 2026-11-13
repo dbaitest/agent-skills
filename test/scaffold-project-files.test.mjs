@@ -74,7 +74,7 @@ describe('projectFiles (scripts)', () => {
 
     assert.match(files['AssemblyInfo.cs'], /\[assembly: DoNotParallelize\]/);
     assert.match(files['AssemblyInfo.cs'], /DbAiTestRun\.DisposeAllAsync\(\)/);
-    assert.match(files['CustomerTests.cs'], /public abstract class CustomerTests : DbAiTestBase/);
+    assert.match(files['CustomerTests.cs'], /public abstract partial class CustomerTests : DbAiTestBase/);
     assert.match(files['CustomerTests.cs'], /namespace Shop\.Database\.Tests;/);
   });
 

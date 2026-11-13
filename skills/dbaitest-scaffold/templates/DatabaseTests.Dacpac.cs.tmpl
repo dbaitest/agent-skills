@@ -9,7 +9,7 @@ namespace {{Namespace}};
 /// SQL Server container.
 /// </summary>
 [TestClass]
-public sealed class DatabaseTests : DbAiTestBase
+public sealed partial class DatabaseTests : DbAiTestBase
 {
     protected override DbEngine CreateEngine() => new MsSqlEngine();
 

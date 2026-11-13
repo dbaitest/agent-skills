@@ -89,18 +89,23 @@ jobs:
             engine: mssql
             prebuild: test/fixtures/repos/sqlproj-shop/database/Shop.Database
             args: --schema dacpac --dacpac test/fixtures/repos/sqlproj-shop/database/Shop.Database/bin/Release/Shop.Database.dacpac
+          # The schema folder and exclusions come from discovery itself, as the skill uses them.
           - variant: existing-postgres
             fixture: scripts-postgres
             engine: postgres
-            args: --engines postgres --schema-dir test/fixtures/repos/scripts-postgres/db/schema
+            from-discovery: true
           - variant: existing-mysql
             fixture: scripts-mysql
             engine: mysql
-            args: --engines mysql --schema-dir test/fixtures/repos/scripts-mysql/database
+            from-discovery: true
           - variant: existing-mssql
             fixture: scripts-mssql
             engine: mssql
-            args: --engines mssql --schema-dir test/fixtures/repos/scripts-mssql/sql
+            from-discovery: true
+          - variant: existing-postgres-excluded
+            fixture: scripts-postgres
+            engine: postgres
+            args: --engines postgres --schema-dir test/fixtures/repos/scripts-postgres/db --exclude-dir seed
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,13 +131,65 @@ jobs:
         if: matrix.prebuild
         run: dotnet build "${{ matrix.prebuild }}" --configuration Release
       - name: Generate the project
-        run: >-
-          node skills/dbaitest-scaffold/scripts/scaffold.mjs
-          --name Generated.Database.Tests
-          --dir "$RUNNER_TEMP/Generated.Database.Tests"
-          ${{ matrix.args }}
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+          FROM_DISCOVERY: ${{ matrix.from-discovery }}
+          ARGS: ${{ matrix.args }}
+        run: |
+          set -euo pipefail
+          if [ "$FROM_DISCOVERY" = "true" ]; then
+            root="test/fixtures/repos/$FIXTURE"
+            report=$(node skills/dbaitest-scaffold/scripts/discover.mjs --root "$root")
+            ARGS="--engines $(jq -r .engine <<<"$report") --schema-dir $root/$(jq -r '.scriptFolders[0].schemaDir' <<<"$report")"
+            for exclusion in $(jq -r '.scriptFolders[0].excludeFromSchemaDir[]' <<<"$report"); do
+              ARGS="$ARGS --exclude-dir $exclusion"
+            done
+            echo "from discovery: $ARGS"
+          fi
+          # shellcheck disable=SC2086 # ARGS is a list of options
+          node skills/dbaitest-scaffold/scripts/scaffold.mjs \
+            --name Generated.Database.Tests \
+            --dir "$RUNNER_TEMP/Generated.Database.Tests" \
+            $ARGS
       - name: Run it
         run: dotnet test "$RUNNER_TEMP/Generated.Database.Tests" --configuration Release
+
+  # Every C# example in references/writing-tests.md compiles and passes against the fixture whose
+  # schema it is written for: an example an agent copies must work.
+  reference-snippets:
+    name: reference-snippets (${{ matrix.fixture }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: sqlproj-shop
+            args: --schema dacpac --sqlproj test/fixtures/repos/sqlproj-shop/database/Shop.Database/Shop.Database.sqlproj
+          - fixture: scripts-postgres
+            args: --engines postgres --schema-dir test/fixtures/repos/scripts-postgres/db/schema
+          - fixture: scripts-mysql
+            args: --engines mysql --schema-dir test/fixtures/repos/scripts-mysql/database
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Generate the project and add the examples
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+          ARGS: ${{ matrix.args }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086 # ARGS is a list of options
+          node skills/dbaitest-scaffold/scripts/scaffold.mjs --name Reference.Snippets.Tests --dir "$RUNNER_TEMP/Snippets" $ARGS
+          node scripts/check-reference-snippets.mjs --fixture "$FIXTURE" --project "$RUNNER_TEMP/Snippets"
+      - name: Run them
+        run: dotnet test "$RUNNER_TEMP/Snippets" --configuration Release
 
   # The tarball holds only what users need, and installs from npm exactly as from the repository.
   package:

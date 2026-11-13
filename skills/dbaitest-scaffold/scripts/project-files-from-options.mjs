@@ -30,6 +30,8 @@ function projectItems(options) {
   if (options.schema === 'scripts' && options.schemaDirPath) {
     const [engine] = options.engines;
     const dir = options.schemaDirPath;
+    // .psql is PostgreSQL's own extension; build output of projects inside the folder is not schema.
+    const patterns = engine === 'postgres' ? [`${dir}\\**\\*.sql`, `${dir}\\**\\*.psql`] : [`${dir}\\**\\*.sql`];
     return `
   <!--
     The repository's own schema scripts, linked rather than copied so there is one source of
@@ -37,7 +39,8 @@ function projectItems(options) {
     SchemaRoot finds them.
   -->
   <ItemGroup>
-    <None Include="${dir}\\**\\*.sql;${dir}\\**\\*.psql"
+    <None Include="${patterns.join(';')}"
+          Exclude="${dir}\\**\\bin\\**;${dir}\\**\\obj\\**"
           LinkBase="Schema\\${engine}"
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

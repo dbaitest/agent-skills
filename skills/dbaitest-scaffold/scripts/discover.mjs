@@ -8,38 +8,52 @@
 // The agent shows the evidence to the user and only asks about what this leaves open.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { isSdkStyleSqlproj, usesCentralPackages } from './project-environment.mjs';
+import { dacpacNameOf, isSdkStyleSqlproj, usesCentralPackages } from './project-environment.mjs';
 import {
   dialectOf,
   dialectScores,
+  ENGINE_FOLDER,
   enginesFromConfigText,
   enginesFromProjectFile,
   isTestProject,
+  MIGRATIONS_FOLDER,
   NON_SCHEMA_FOLDER,
+  OBJECT_TYPE_FOLDER,
   SCHEMA_ROOT_FOLDER,
+  SUPPORTED_ENGINES,
+  VERSIONED_MIGRATION_FILE,
 } from './repository-signals.mjs';
 
+// Every dot-directory (.git, .vs, .idea, .venv, .next, .terraform, .claude, .agents …) is skipped
+// too; these are build output, dependencies and tooling.
 const SKIPPED_DIRECTORIES = new Set([
-  '.git', '.vs', '.idea', '.vscode', '.claude', '.agents', '.github', 'node_modules', 'bin', 'obj',
-  'TestResults', 'packages', 'artifacts', 'dist', 'build', 'out', 'coverage',
+  'node_modules', 'bin', 'obj', 'TestResults', 'packages', 'artifacts', 'dist', 'build', 'out',
+  'coverage', 'vendor', 'target', 'Pods', 'venv', '__pycache__', 'bower_components', 'jspm_packages',
 ]);
 const MAX_DEPTH = 8;
-const MAX_FILES = 20_000;
+const MAX_RELEVANT_FILES = 20_000; // project, configuration and .sql files; others are not counted
+const MAX_DIRECTORIES = 50_000;
 const MAX_SQL_BYTES_PER_FOLDER = 2_000_000;
-const CONFIG_FILE = /^(appsettings(\.[\w-]+)?\.json|(web|app)\.config|\.env(\.[\w-]+)?|(docker-)?compose(\.[\w-]+)?\.ya?ml|launchSettings\.json)$/i;
+const CONFIG_FILE = /^(appsettings(\.[\w-]+)?\.json|local\.settings\.json|(web|app)\.config|\.env(\.[\w-]+)?|(docker-)?compose(\.[\w-]+)?\.ya?ml|launchSettings\.json)$/i;
+const RELEVANT_FILE = /\.(csproj|fsproj|vbproj|sqlproj|sql|psql)$/i;
 
 const toPosix = (p) => p.split(path.sep).join('/');
 
-/** Every file under root that discovery looks at, honouring the skip list and the limits. */
+/** The files discovery looks at, honouring the skip list and the limits. */
 function walk(root) {
   const files = [];
+  let directories = 0;
   let truncated = false;
   const visit = (dir, depth) => {
+    if (++directories > MAX_DIRECTORIES) {
+      truncated = true;
+      return;
+    }
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -47,19 +61,22 @@ function walk(root) {
       return; // unreadable: not ours to report
     }
     for (const entry of entries) {
-      if (files.length >= MAX_FILES) {
+      if (files.length >= MAX_RELEVANT_FILES) {
         truncated = true;
         return;
       }
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (depth < MAX_DEPTH && !SKIPPED_DIRECTORIES.has(entry.name)) {
+        if (entry.name.startsWith('.') || SKIPPED_DIRECTORIES.has(entry.name)) {
+          continue;
+        }
+        if (depth < MAX_DEPTH) {
           visit(full, depth + 1);
-        } else if (depth >= MAX_DEPTH) {
+        } else {
           truncated = true;
         }
-      } else if (entry.isFile()) {
-        files.push(full);
+      } else if (entry.isFile() && (RELEVANT_FILE.test(entry.name) || CONFIG_FILE.test(entry.name))) {
+        files.push(full); // symbolic links are neither directories nor files here: not followed
       }
     }
   };
@@ -67,27 +84,33 @@ function walk(root) {
   return { files, truncated };
 }
 
-const read = (file, limit = 512_000) => {
+/** The first `limit` bytes of a file as text, without reading the rest (a .sql dump can be huge). */
+function read(file, limit = 512_000) {
+  let fd;
   try {
-    const text = readFileSync(file, 'utf8');
-    return text.length > limit ? text.slice(0, limit) : text;
+    fd = openSync(file, 'r');
+    const buffer = Buffer.alloc(limit);
+    const bytes = readSync(fd, buffer, 0, limit, 0);
+    return buffer.subarray(0, bytes).toString('utf8');
   } catch {
     return '';
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
-};
-
-/** The dacpac file name a database project builds. */
-function dacpacNameOf(sqlprojPath, text) {
-  const target = /<SqlTargetName>\s*([^<\s]+)\s*</i.exec(text)?.[1] ?? /<TargetName>\s*([^<\s]+)\s*</i.exec(text)?.[1];
-  return `${target ?? path.basename(sqlprojPath, path.extname(sqlprojPath))}.dacpac`;
 }
 
 /** Built copies of a dacpac under the project's bin/ (bin is skipped by the walk, so look here). */
 function builtDacpacs(sqlprojDir, dacpacName) {
   const found = [];
   const visit = (dir, depth) => {
-    if (depth > 4 || !existsSync(dir)) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (depth > 4) return;
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) visit(full, depth + 1);
       else if (entry.name.toLowerCase() === dacpacName.toLowerCase()) found.push(full);
@@ -109,6 +132,72 @@ function schemaRootOf(root, fileDir) {
     }
   }
   return found;
+}
+
+const firstSegment = (dir, file) => path.relative(dir, path.dirname(file)).split(path.sep)[0];
+
+function sqlOf(files) {
+  let budget = MAX_SQL_BYTES_PER_FOLDER;
+  let sql = '';
+  for (const file of [...files].sort()) {
+    if (budget <= 0) break;
+    const text = read(file, Math.min(budget, 512_000));
+    sql += `\n${text}`;
+    budget -= text.length;
+  }
+  return sql;
+}
+
+/**
+ * Splits a group whose first-level subfolders are separate databases: named after an engine, or
+ * written in different dialects.
+ */
+function splitByEngine(dir, files) {
+  const bySubfolder = new Map();
+  for (const file of files) {
+    const sub = firstSegment(dir, file);
+    bySubfolder.set(sub, [...(bySubfolder.get(sub) ?? []), file]);
+  }
+  const subs = [...bySubfolder.keys()].filter(Boolean);
+  const engineNamed = subs.filter((s) => Object.values(ENGINE_FOLDER).some((p) => p.test(s)));
+  const dialects = new Set(subs.map((s) => dialectOf(dialectScores(sqlOf(bySubfolder.get(s))))).filter(Boolean));
+  if (subs.length > 1 && (engineNamed.length > 0 || dialects.size > 1)) {
+    return [...bySubfolder].map(([sub, subFiles]) => [sub ? path.join(dir, sub) : dir, subFiles]);
+  }
+  return [[dir, files]];
+}
+
+function describeFolder(root, dir, sqlFiles) {
+  const rel = (p) => toPosix(path.relative(root, p)) || '.';
+  const scores = dialectScores(sqlOf(sqlFiles));
+  const dialect = dialectOf(scores);
+  const subfolders = [...new Set(sqlFiles.map((f) => firstSegment(dir, f)).filter(Boolean))].sort();
+  const others = subfolders.filter((s) => !NON_SCHEMA_FOLDER.test(s) && !MIGRATIONS_FOLDER.test(s));
+  // Migrations beside a schema folder are its history: applying both creates objects twice.
+  const suggestedExclusions = subfolders.filter((s) => NON_SCHEMA_FOLDER.test(s) || (MIGRATIONS_FOLDER.test(s) && others.length > 0));
+  const schemaFiles = sqlFiles.filter((f) => !suggestedExclusions.includes(firstSegment(dir, f)));
+  const schemaSubfolders = [...new Set(schemaFiles.map((f) => firstSegment(dir, f)))];
+  const single = schemaSubfolders.length === 1 && schemaSubfolders[0] !== '' && suggestedExclusions.length > 0;
+  const atRoot = dir === root;
+
+  // Two or more sibling folders that each create tables, named neither after object types nor
+  // as seed/migrations, may be separate databases (database/Billing, database/Shop).
+  const tableFolders = schemaSubfolders.filter((s) => s !== '' && !OBJECT_TYPE_FOLDER.test(s)
+    && /\bCREATE\s+TABLE\b/i.test(sqlOf(schemaFiles.filter((f) => firstSegment(dir, f) === s))));
+
+  return {
+    path: rel(dir),
+    files: sqlFiles.length,
+    dialect,
+    dialectScores: scores,
+    subfolders,
+    suggestedExclusions,
+    // Never the repository root: the test project would sit inside its own schema folder.
+    schemaDir: atRoot ? null : single ? rel(path.join(dir, schemaSubfolders[0])) : rel(dir),
+    excludeFromSchemaDir: single || atRoot ? [] : suggestedExclusions,
+    versionedMigrations: sqlFiles.some((f) => VERSIONED_MIGRATION_FILE.test(path.basename(f))),
+    possibleSeparateDatabases: tableFolders.length > 1 ? tableFolders : [],
+  };
 }
 
 function sdkVersionAt(root) {
@@ -138,20 +227,21 @@ export function discover(root, { sdkVersion = sdkVersionAt } = {}) {
       evidence.push(...enginesFromProjectFile(text).map((e) => ({ ...e, file: rel(file) })));
     } else if (ext === '.sqlproj') {
       const text = read(file);
+      const dacpacName = dacpacNameOf(file, text);
       sqlprojs.push({
         path: rel(file),
         sdkStyle: isSdkStyleSqlproj(text),
-        dacpacName: dacpacNameOf(file, text),
-        builtDacpacs: builtDacpacs(path.dirname(file), dacpacNameOf(file, text)).map(rel),
+        dacpacName,
+        builtDacpacs: builtDacpacs(path.dirname(file), dacpacName).map(rel),
       });
-      evidence.push({ engine: 'mssql', signal: 'SQL Server database project', file: rel(file) });
+      evidence.push({ engine: 'mssql', signal: 'SQL Server database project', strength: 'strong', file: rel(file) });
     } else if (CONFIG_FILE.test(name)) {
       evidence.push(...enginesFromConfigText(read(file)).map((e) => ({ ...e, file: rel(file) })));
     }
   }
 
   // Script folders: .sql/.psql files outside database projects and test projects, grouped by
-  // their schema root.
+  // their schema root, then split where subfolders are separate databases.
   const sqlprojDirs = sqlprojs.map((s) => path.join(root, path.dirname(s.path)));
   const inside = (file, dirs) => dirs.some((dir) => file.startsWith(dir + path.sep));
   const groups = new Map();
@@ -160,55 +250,47 @@ export function discover(root, { sdkVersion = sdkVersionAt } = {}) {
       continue;
     }
     const groupRoot = schemaRootOf(root, path.dirname(file));
-    groups.set(groupRoot, [...(groups.get(groupRoot) ?? []), file]);
+    if (!groups.has(groupRoot)) groups.set(groupRoot, []);
+    groups.get(groupRoot).push(file);
   }
 
-  const scriptFolders = [...groups].map(([dir, sqlFiles]) => {
-    let budget = MAX_SQL_BYTES_PER_FOLDER;
-    let sql = '';
-    for (const file of sqlFiles.sort()) {
-      if (budget <= 0) break;
-      const text = read(file, budget);
-      sql += `\n${text}`;
-      budget -= text.length;
+  const scriptFolders = [...groups]
+    .flatMap(([dir, sqlFiles]) => splitByEngine(dir, sqlFiles))
+    .map(([dir, sqlFiles]) => describeFolder(root, dir, sqlFiles))
+    .sort((a, b) => b.files - a.files);
+  for (const folder of scriptFolders) {
+    if (folder.dialect) {
+      evidence.push({ engine: folder.dialect, signal: `SQL dialect of ${folder.files} script(s)`, strength: 'weak', file: folder.path });
     }
-    const scores = dialectScores(sql);
-    const dialect = dialectOf(scores);
-    const subfolders = [...new Set(sqlFiles.map((f) => path.relative(dir, path.dirname(f)).split(path.sep)[0]).filter(Boolean))].sort();
-    if (dialect) {
-      evidence.push({ engine: dialect, signal: `SQL dialect of ${sqlFiles.length} script(s)`, file: rel(dir) });
-    }
-    const suggestedExclusions = subfolders.filter((s) => NON_SCHEMA_FOLDER.test(s));
-    // Where SchemaRoot should point: the one subfolder holding every schema file when the rest
-    // are excluded (db/schema next to db/seed), else the folder itself with the exclusions.
-    const schemaFiles = sqlFiles.filter((f) => !suggestedExclusions.includes(path.relative(dir, path.dirname(f)).split(path.sep)[0]));
-    const schemaSubfolders = [...new Set(schemaFiles.map((f) => path.relative(dir, path.dirname(f)).split(path.sep)[0]))];
-    const single = schemaSubfolders.length === 1 && schemaSubfolders[0] !== '' && suggestedExclusions.length > 0;
-    return {
-      path: rel(dir),
-      files: sqlFiles.length,
-      dialect,
-      dialectScores: scores,
-      subfolders,
-      suggestedExclusions,
-      schemaDir: single ? rel(path.join(dir, schemaSubfolders[0])) : rel(dir),
-      excludeFromSchemaDir: single ? [] : suggestedExclusions,
-    };
-  }).sort((a, b) => b.files - a.files);
+  }
 
-  const engines = ['mssql', 'postgres', 'mysql']
-    .map((engine) => ({ engine, evidence: evidence.filter((e) => e.engine === engine).map(({ signal, file }) => ({ signal, file })) }))
+  const byEngine = (names) => names
+    .map((engine) => ({
+      engine,
+      evidence: evidence.filter((e) => e.engine === engine).map(({ signal, strength, file }) => ({ signal, strength, file })),
+    }))
     .filter((e) => e.evidence.length > 0)
     .sort((a, b) => b.evidence.length - a.evidence.length);
+  const engines = byEngine(SUPPORTED_ENGINES);
+  const unsupported = byEngine([...new Set(evidence.map((e) => e.engine))].filter((e) => !SUPPORTED_ENGINES.includes(e)));
+  const engine = engines.length === 1 && unsupported.length === 0 ? engines[0].engine : null;
 
-  const top = readdirSync(root);
-  const solution = top.find((f) => /\.slnx?$/i.test(f)) ?? null;
-  const testsFolder = ['tests', 'test'].find((d) => top.includes(d) && statSync(path.join(root, d)).isDirectory()) ?? null;
+  let top = [];
+  try {
+    top = readdirSync(root, { withFileTypes: true });
+  } catch {
+    // reported as an empty repository
+  }
+  const solution = top.find((e) => e.isFile() && /\.slnx?$/i.test(e.name))?.name ?? null;
+  const testsFolder = top.find((e) => e.isDirectory() && /^tests?$/i.test(e.name))?.name ?? null;
 
   return {
     root: toPosix(root),
-    engine: engines.length === 1 ? engines[0].engine : null,
+    engine,
+    // A package or a database project names the engine; configuration and dialect only hint.
+    confident: engine !== null && engines[0].evidence.some((e) => e.strength === 'strong'),
     engines,
+    unsupported,
     sqlprojs,
     scriptFolders,
     solution,
