@@ -45,12 +45,21 @@ an issue when nuget.org has a newer one. To move:
 
 A release is a tag plus a GitHub release. The `Publish` workflow runs on the published release,
 sets the package version from the tag (`package.json` keeps `0.0.0` on `main`), runs the tests and
-package checks, and publishes to npm with provenance.
+package checks, and **stages** the version on npm. Nothing reaches users until a maintainer
+approves it with 2FA. Trusted publishing from GitHub Actions attaches a provenance statement
+automatically; `package.json` does not ask for one, because a publish from a laptop cannot
+produce it (npm fails with "Automatic provenance generation not supported for provider: null").
 
 ```bash
 # Move the Unreleased section of CHANGELOG.md under the new version first.
-gh release create v0.1.0 --notes-file <(awk '/^## \[0.1.0\]/{f=1; next} /^## \[|^\[/{f=0} f' CHANGELOG.md)
+# The notes go through a file: gh on Windows cannot read a <(...) process substitution.
+awk '/^## \[0.2.0\]/{f=1; next} /^## \[|^\[/{f=0} f' CHANGELOG.md > release-notes.md
+gh release create v0.2.0 --notes-file release-notes.md && rm release-notes.md
 ```
+
+When the workflow is green, approve the staged version: npmjs.com → your avatar → **Staged
+Packages** → review → approve (2FA), or `npm stage list` and `npm stage approve <id>` (npm 11.15+).
+Check the staged tarball's file list against the release before approving.
 
 The workflow publishes through **trusted publishing**: GitHub mints an OIDC token and npm checks
 it against the trusted publisher registered on the package (npmjs.com → `@dbaitest/skills` →
@@ -63,6 +72,7 @@ Settings → Trusted publishing):
 | Repository | `agent-skills` |
 | Workflow filename | `publish.yml` |
 | Environment | `npm` |
+| Allowed actions | `npm stage publish` only ("Allow npm publish" and "Allow npm dist-tag" unchecked) |
 
 The `npm` environment allows deployments from `v*` tags and `main` only. A trusted publisher can
 only be added to a package that exists, so the very first version (0.1.0) is published by a
@@ -73,7 +83,8 @@ git switch main && git pull
 npm version 0.1.0 --no-git-tag-version
 npm publish --access public      # asks for the npm 2FA code
 git checkout -- package.json
-gh release create v0.1.0 --target "$(git rev-parse HEAD)" --notes-file <(awk '/^## \[0.1.0\]/{f=1; next} /^## \[|^\[/{f=0} f' CHANGELOG.md)
+awk '/^## \[0.1.0\]/{f=1; next} /^## \[|^\[/{f=0} f' CHANGELOG.md > release-notes.md
+gh release create v0.1.0 --target "$(git rev-parse HEAD)" --notes-file release-notes.md && rm release-notes.md
 ```
 
 The release tags the same commit; its workflow run finds 0.1.0 on npm and only runs the checks.
