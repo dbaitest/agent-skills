@@ -32,13 +32,13 @@ jobs:
         with:
           ref: refs/tags/${{ env.TAG }}
 
-      # Trusted publishing needs Node 22.14+ and npm 11.5.1+; the npm bundled with Node 22 is
-      # older and fails with a misleading 404, so npm is upgraded explicitly.
+      # Trusted publishing needs Node 22.14+ and npm 11.5.1+, `npm stage` npm 11.15+; the npm
+      # bundled with Node 22 is older and fails with a misleading 404, so npm is upgraded.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - run: npm install --global npm@11
+      - run: npm install --global "npm@^11.15.0"
 
       # The tag is the version: v0.1.0 publishes 0.1.0. package.json holds 0.0.0 on main.
       - name: Set the version from the tag
@@ -57,10 +57,14 @@ jobs:
       - run: node scripts/sync-compat.mjs --check
       - run: node scripts/check-pack.mjs
 
-      # A version cannot be published twice. The first release (0.1.0) is published by hand,
+      # Staged publishing: the version waits on npmjs.com until a maintainer approves it with
+      # 2FA (Settings → Staged Packages, or `npm stage approve`). The trusted publisher is only
+      # allowed to stage, so a compromised workflow cannot put a version in front of users.
+      #
+      # A version cannot be published twice. The first release (0.1.0) was published by hand,
       # because a trusted publisher can only be added to a package that exists; its GitHub
-      # release then only runs the checks above.
-      - name: Publish to npm
+      # release only runs the checks above.
+      - name: Stage on npm for approval
         run: |
           set -euo pipefail
           version="${TAG#v}"
@@ -68,4 +72,5 @@ jobs:
             echo "::notice::@dbaitest/skills@$version is already on npm; nothing to publish."
             exit 0
           fi
-          npm publish --access public
+          npm stage publish --access public
+          echo "::notice::@dbaitest/skills@$version is staged. Approve it on npmjs.com (Staged Packages) to publish it."
