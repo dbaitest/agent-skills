@@ -11,6 +11,7 @@ Codex, Cursor and GitHub Copilot** with one command.
 | Skill | What it does |
 |---|---|
 | `dbaitest-scaffold` | Adds a .NET database integration test project on [DbAiTest](https://dbaitest.com/db-test/) to your repository. It finds the database the repository already has (an SDK-style `.sqlproj` / `.dacpac`, or a folder of `.sql` scripts) and the engine the app uses (SQL Server, PostgreSQL or MySQL), wires the tests to that schema in a throwaway Docker container, and writes tests for the procedures, functions, views and tables you pick. |
+| `dbaitest-add-test` | Adds more tests to a repository that already has a DbAiTest test project. It finds that project, reads how it is wired (the abstract test class, the class per engine, where the schema comes from), and writes tests for the procedures, functions, views and tables you pick, reusing the harness the project already has. |
 
 ## Install
 
@@ -24,6 +25,11 @@ order procedure first"*. It checks for Node, the .NET SDK and Docker, reads the 
 the engine and your existing database project or schema scripts, generates the test project
 wired to them, proposes the objects to test first, writes those tests, and runs `dotnet test`. It
 asks only what it cannot tell from the repository.
+
+Once the project has tests, the second skill takes over: *"add a test for the customer total
+view"*. It finds the DbAiTest test project, reads which class the tests belong in and which
+engines run them, proposes the objects that are not covered yet, writes those tests into the
+class the project already has, and runs `dotnet test` again.
 
 A project install is meant to be committed, so everyone on the project gets the skill. The
 installer prints the folders to commit, and warns when `.gitignore` hides them.

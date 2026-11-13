@@ -134,6 +134,9 @@ following `references/writing-tests.md`:
 
 Run `dotnet test <dir>` until green. Report what each test proves and anything you could not test.
 
+When the user asks for more tests later, `dbaitest-add-test` finds the project you generated and
+extends it; point them at it rather than repeating this workflow.
+
 ## Rules
 
 - Tests share one container per engine: never remove `[assembly: DoNotParallelize]`.

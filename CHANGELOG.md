@@ -7,6 +7,17 @@ change the installer's behaviour or a skill's generated output, and such changes
 
 ## [Unreleased]
 
+### Added
+
+- **`dbaitest-add-test`**: adds more tests to a repository that already has a DbAiTest test
+  project. `scripts/locate-tests.mjs` finds that project and reports how it is wired (the
+  abstract test class, the class per engine, where the schema comes from, the tests that are
+  already there); the agent proposes the objects that are not covered yet, writes those tests
+  into the class the project already has, and runs `dotnet test`.
+  `references/adding-tests.md` covers where the tests go and how to cover an object;
+  `references/engine-calls.md` covers the calls per engine, with examples the CI compiles and
+  runs against real containers. The scaffolder is unchanged.
+
 ## [0.2.0] - 2026-11-13
 
 ### Breaking

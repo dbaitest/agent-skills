@@ -223,7 +223,10 @@ describe('add', () => {
 
     assert.equal(run(box, 'add', '--agent', 'claude').status, 0);
     assert.ok(!existsSync(path.join(box.project, '.claude', '.dbaitest-skills-staging')));
-    assert.deepEqual(readdirSync(path.join(box.project, '.claude', 'skills')), ['dbaitest-scaffold']);
+    assert.deepEqual(
+      readdirSync(path.join(box.project, '.claude', 'skills')).sort(),
+      ['dbaitest-add-test', 'dbaitest-scaffold'],
+    );
   });
 
   it('warns when git ignores the target, with advice that works', (t) => {
@@ -303,7 +306,11 @@ describe('list and remove', () => {
       encoding: 'utf8',
       env: { ...process.env, HOME: box.home, USERPROFILE: box.home },
     });
-    assert.equal(result.stdout.trim().split('\n').length, 1, result.stdout);
+    const lines = result.stdout.trim().split('\n');
+    // One line per installed skill, and one location: run from the home directory, the project
+    // and the global scope are the same folder and must not be listed twice.
+    assert.deepEqual(lines.map((line) => line.split(/\s{2,}/)[1]).sort(), ['dbaitest-add-test', 'dbaitest-scaffold']);
+    assert.equal(new Set(lines.map((line) => line.split(/\s{2,}/)[0])).size, 1, result.stdout);
   });
 
   it('says so when nothing is installed', () => {

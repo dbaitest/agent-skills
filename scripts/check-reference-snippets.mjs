@@ -11,7 +11,7 @@
 //
 //   node scripts/check-reference-snippets.mjs --fixture sqlproj-shop --project <generated project dir>
 //
-// Writes <project>/ReferenceSnippets.cs; then run dotnet test on the project.
+// Writes <project>/ReferenceSnippets.<reference>.cs; then run dotnet test on the project.
 
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -63,5 +63,8 @@ public partial class DatabaseTests
     ${members.join('\n\n    ')}
 }
 `;
-writeFileSync(path.join(values.project, 'ReferenceSnippets.cs'), source);
-console.log(`Wrote ${blocks.length} example(s) for ${values.fixture} into ${path.join(values.project, 'ReferenceSnippets.cs')}.`);
+// One file per reference: two references can then be checked in the same project, and their
+// examples share the class without overwriting each other.
+const fileName = `ReferenceSnippets.${path.basename(values.reference).replace(/\.md$/i, '')}.cs`;
+writeFileSync(path.join(values.project, fileName), source);
+console.log(`Wrote ${blocks.length} example(s) for ${values.fixture} into ${path.join(values.project, fileName)}.`);
