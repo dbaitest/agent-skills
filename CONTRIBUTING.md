@@ -52,7 +52,9 @@ produce it (npm fails with "Automatic provenance generation not supported for pr
 
 ```bash
 # Move the Unreleased section of CHANGELOG.md under the new version first.
-gh release create v0.2.0 --notes-file <(awk '/^## \[0.2.0\]/{f=1; next} /^## \[|^\[/{f=0} f' CHANGELOG.md)
+# The notes go through a file: gh on Windows cannot read a <(...) process substitution.
+awk '/^## \[0.2.0\]/{f=1; next} /^## \[|^\[/{f=0} f' CHANGELOG.md > release-notes.md
+gh release create v0.2.0 --notes-file release-notes.md && rm release-notes.md
 ```
 
 When the workflow is green, approve the staged version: npmjs.com → your avatar → **Staged
@@ -81,7 +83,8 @@ git switch main && git pull
 npm version 0.1.0 --no-git-tag-version
 npm publish --access public      # asks for the npm 2FA code
 git checkout -- package.json
-gh release create v0.1.0 --target "$(git rev-parse HEAD)" --notes-file <(awk '/^## \[0.1.0\]/{f=1; next} /^## \[|^\[/{f=0} f' CHANGELOG.md)
+awk '/^## \[0.1.0\]/{f=1; next} /^## \[|^\[/{f=0} f' CHANGELOG.md > release-notes.md
+gh release create v0.1.0 --target "$(git rev-parse HEAD)" --notes-file release-notes.md && rm release-notes.md
 ```
 
 The release tags the same commit; its workflow run finds 0.1.0 on npm and only runs the checks.

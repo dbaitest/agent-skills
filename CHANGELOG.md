@@ -7,6 +7,15 @@ change the installer's behaviour or a skill's generated output, and such changes
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-13
+
+### Changed
+
+- Releases are published from GitHub Actions through npm trusted publishing, with a provenance
+  statement, and only after a maintainer approves the staged version with 2FA.
+- `package.json` no longer asks npm for provenance itself (`publishConfig.provenance`), which made
+  any publish outside CI fail. The installer and the skill are unchanged.
+
 ## [0.1.0] - 2026-11-13
 
 First release.
@@ -25,5 +34,6 @@ First release.
   copy, treats a CRLF checkout as up to date, and needs `--force` to replace or remove an edited
   copy.
 
-[Unreleased]: https://github.com/dbaitest/agent-skills/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dbaitest/agent-skills/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/dbaitest/agent-skills/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dbaitest/agent-skills/releases/tag/v0.1.0
