@@ -1,7 +1,7 @@
 [TestClass]
-public sealed class MySqlCustomerTests : CustomerTests
+public sealed class MySql{{Suite}} : {{Suite}}
 {
     protected override DbEngine CreateEngine() => new MySqlEngine();
 
     protected override string? SchemaRoot => "Schema/mysql";
-}
+{{SchemaLoadOptions}}}

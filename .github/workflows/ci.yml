@@ -61,6 +61,9 @@ jobs:
 
   # What users get: the skill's own generator writes a project, and it passes against real
   # containers. Linux only: the hosted Windows and macOS runners do not run Linux containers.
+  # The existing-* variants start where the skill does in a user's repository: discovery on a
+  # fixture repository must name the expected engine before the project is generated against
+  # that repository's own schema.
   scaffold:
     name: scaffold (${{ matrix.variant }})
     strategy:
@@ -74,14 +77,30 @@ jobs:
           - variant: mysql
             args: --engines mysql
           - variant: all-engines
-            args: ""
+            args: --engines mssql,postgres,mysql
           - variant: postgres-net8.0
             args: --engines postgres --framework net8.0
-          - variant: mssql-sqlproj
-            args: --schema dacpac --sqlproj test/fixtures/Shop.Database/Shop.Database.sqlproj
-          - variant: mssql-dacpac
-            prebuild: true
-            args: --schema dacpac --dacpac test/fixtures/Shop.Database/bin/Release/Shop.Database.dacpac
+          - variant: existing-sqlproj
+            fixture: sqlproj-shop
+            engine: mssql
+            args: --schema dacpac --sqlproj test/fixtures/repos/sqlproj-shop/database/Shop.Database/Shop.Database.sqlproj
+          - variant: existing-dacpac
+            fixture: sqlproj-shop
+            engine: mssql
+            prebuild: test/fixtures/repos/sqlproj-shop/database/Shop.Database
+            args: --schema dacpac --dacpac test/fixtures/repos/sqlproj-shop/database/Shop.Database/bin/Release/Shop.Database.dacpac
+          - variant: existing-postgres
+            fixture: scripts-postgres
+            engine: postgres
+            args: --engines postgres --schema-dir test/fixtures/repos/scripts-postgres/db/schema
+          - variant: existing-mysql
+            fixture: scripts-mysql
+            engine: mysql
+            args: --engines mysql --schema-dir test/fixtures/repos/scripts-mysql/database
+          - variant: existing-mssql
+            fixture: scripts-mssql
+            engine: mssql
+            args: --engines mssql --schema-dir test/fixtures/repos/scripts-mssql/sql
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,9 +112,19 @@ jobs:
           dotnet-version: |
             8.0.x
             10.0.x
+      - name: Discovery names the fixture's engine
+        if: matrix.fixture
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+          EXPECTED: ${{ matrix.engine }}
+        run: |
+          set -euo pipefail
+          engine=$(node skills/dbaitest-scaffold/scripts/discover.mjs --root "test/fixtures/repos/$FIXTURE" | jq -r .engine)
+          echo "discovered: $engine"
+          test "$engine" = "$EXPECTED"
       - name: Build the database project fixture
         if: matrix.prebuild
-        run: dotnet build test/fixtures/Shop.Database --configuration Release
+        run: dotnet build "${{ matrix.prebuild }}" --configuration Release
       - name: Generate the project
         run: >-
           node skills/dbaitest-scaffold/scripts/scaffold.mjs

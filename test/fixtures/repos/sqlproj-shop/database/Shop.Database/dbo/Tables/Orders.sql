@@ -1,0 +1,6 @@
+CREATE TABLE dbo.Orders (
+    Id         INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Orders PRIMARY KEY,
+    CustomerId INT NOT NULL CONSTRAINT FK_Orders_Customers REFERENCES dbo.Customers (Id),
+    Amount     DECIMAL(10, 2) NOT NULL CONSTRAINT CK_Orders_Amount CHECK (Amount > 0),
+    PlacedAt   DATETIME2(3) NOT NULL CONSTRAINT DF_Orders_PlacedAt DEFAULT SYSUTCDATETIME()
+);

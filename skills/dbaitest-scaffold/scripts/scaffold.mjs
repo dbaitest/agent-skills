@@ -25,9 +25,14 @@ const USAGE = `Usage: node scaffold.mjs --name <Project.Name> [options]   (run f
 
   --name <name>          Project name, also the root namespace (e.g. Shop.Database.Tests).
   --dir <path>           Where to create the project (default: ./<name>).
-  --engines <list>       Comma-separated: ${Object.keys(ENGINES).join(', ')} (default: all three).
+  --engines <list>       Comma-separated: ${Object.keys(ENGINES).join(', ')}. Required for scripts
+                         (run discover.mjs to find the one the repository uses).
   --schema <kind>        scripts (default): SQL files per engine under Schema/<engine>/.
                          dacpac: deploy a SQL Server .dacpac (SQL Server only).
+  --schema-dir <path>    With scripts and one engine: the repository's existing schema folder,
+                         linked into the project instead of a starter schema.
+  --exclude-dir <name>   With --schema-dir: a subfolder that is not schema (seed data, one-off
+                         scripts); repeatable.
   --sqlproj <path>       With --schema dacpac: an SDK-style database project to build and deploy.
   --dacpac <path>        With --schema dacpac: a prebuilt .dacpac to deploy instead.
   --framework <tfm>      ${versions.targetFrameworks.join(' | ')} (default: newest the SDK in effect there can build).
@@ -35,6 +40,13 @@ const USAGE = `Usage: node scaffold.mjs --name <Project.Name> [options]   (run f
   --help                 Show this text.`;
 
 export class UsageError extends Error {}
+
+/** True when a directory holds a .sql or .psql file at any depth. */
+function containsSql(dir) {
+  return readdirSync(dir, { withFileTypes: true }).some((entry) => (entry.isDirectory()
+    ? containsSql(path.join(dir, entry.name))
+    : /\.(sql|psql)$/i.test(entry.name)));
+}
 
 /** Validates the command line and resolves it into generator options. Throws UsageError. */
 export function parseOptions(argv, { cwd = process.cwd(), framework = detectFramework } = {}) {
@@ -49,6 +61,8 @@ export function parseOptions(argv, { cwd = process.cwd(), framework = detectFram
         schema: { type: 'string', default: 'scripts' },
         sqlproj: { type: 'string' },
         dacpac: { type: 'string' },
+        'schema-dir': { type: 'string' },
+        'exclude-dir': { type: 'string', multiple: true },
         framework: { type: 'string' },
         force: { type: 'boolean', default: false },
         help: { type: 'boolean', default: false },
@@ -69,9 +83,12 @@ export function parseOptions(argv, { cwd = process.cwd(), framework = detectFram
     throw new UsageError(`--schema must be scripts or dacpac, not '${values.schema}'.`);
   }
 
+  if (values.engines === undefined && values.schema === 'scripts') {
+    throw new UsageError('--engines is required: name the engine(s) the repository uses (discover.mjs reports them).');
+  }
   const engines = values.engines !== undefined
     ? [...new Set(values.engines.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean))]
-    : values.schema === 'dacpac' ? ['mssql'] : Object.keys(ENGINES);
+    : ['mssql'];
   const unknown = engines.filter((e) => !(e in ENGINES));
   if (unknown.length > 0 || engines.length === 0) {
     throw new UsageError(`Unknown engine(s): ${unknown.join(', ') || '(none given)'}. Use ${Object.keys(ENGINES).join(', ')}.`);
@@ -85,11 +102,32 @@ export function parseOptions(argv, { cwd = process.cwd(), framework = detectFram
 
   const options = { name: values.name, engines, schema: values.schema, framework: chosenFramework, projectDir, force: values.force };
 
+  const excludeDirs = values['exclude-dir'] ?? [];
   if (values.schema !== 'dacpac') {
     if (values.sqlproj || values.dacpac) {
       throw new UsageError('--sqlproj and --dacpac only apply with --schema dacpac.');
     }
-    return options;
+    if (values['schema-dir'] === undefined) {
+      if (excludeDirs.length > 0) {
+        throw new UsageError('--exclude-dir only applies with --schema-dir.');
+      }
+      return options;
+    }
+    if (engines.length !== 1) {
+      throw new UsageError('--schema-dir links one engine\'s schema: give exactly one engine.');
+    }
+    const schemaDir = path.resolve(cwd, values['schema-dir']);
+    if (!existsSync(schemaDir) || !statSync(schemaDir).isDirectory() || !containsSql(schemaDir)) {
+      throw new UsageError(`--schema-dir must be a directory holding .sql files: ${schemaDir}`);
+    }
+    const badExclusion = excludeDirs.find((d) => !/^[\w.-]+$/.test(d));
+    if (badExclusion !== undefined) {
+      throw new UsageError(`--exclude-dir takes a folder name, not a path: ${badExclusion}`);
+    }
+    return { ...options, schemaDirPath: csprojPath(projectDir, schemaDir), excludeDirs };
+  }
+  if (values['schema-dir'] !== undefined || excludeDirs.length > 0) {
+    throw new UsageError('--schema-dir and --exclude-dir only apply with --schema scripts.');
   }
 
   if (engines.length !== 1 || engines[0] !== 'mssql') {

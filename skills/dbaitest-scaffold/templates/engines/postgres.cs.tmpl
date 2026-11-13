@@ -1,7 +1,7 @@
 [TestClass]
-public sealed class PostgreSqlCustomerTests : CustomerTests
+public sealed class PostgreSql{{Suite}} : {{Suite}}
 {
     protected override DbEngine CreateEngine() => new PostgreSqlEngine();
 
     protected override string? SchemaRoot => "Schema/postgres";
-}
+{{SchemaLoadOptions}}}
