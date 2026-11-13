@@ -81,7 +81,9 @@ function typeHasMember(type, member) {
 const RECEIVER_TYPES = { Harness: 'DbAiTestHarness' };
 
 // Names that look like DbAiTest API but belong to .NET, MSTest or DacFx.
-const NOT_DBAITEST = new Set(['DacDeployOptions', 'InvalidOperationException', 'DbAiTestVersion']);
+const NOT_DBAITEST = new Set([
+  'DacDeployOptions', 'InvalidOperationException', 'DbAiTestVersion', 'NullReferenceException',
+]);
 
 /** Every API reference in a text, as {kind, name, type?}. */
 function references(text) {

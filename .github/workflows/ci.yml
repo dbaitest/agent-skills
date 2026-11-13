@@ -207,6 +207,60 @@ jobs:
           test "$(jq -r '.testProjects[0].testMethods | length' "$report")" -ge 1
           test "$(jq -r '.truncated' "$report")" = false
 
+  # The skill that diagnoses a failing test reads the result file of the run: it has to name the
+  # failed test and the engine class it failed in.
+  diagnose:
+    name: diagnose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Generate a project with a failing test
+        run: |
+          set -euo pipefail
+          node skills/dbaitest-scaffold/scripts/scaffold.mjs \
+            --name Diagnose.Database.Tests \
+            --dir "$RUNNER_TEMP/Diagnose.Database.Tests" \
+            --engines postgres \
+            --schema-dir test/fixtures/repos/scripts-postgres/db/schema
+          cat > "$RUNNER_TEMP/Diagnose.Database.Tests/Failing.cs" <<'CS'
+          namespace Diagnose.Database.Tests;
+
+          public abstract partial class DatabaseTests
+          {
+              [TestMethod]
+              public async Task Deliberately_Fails_On_The_Amount()
+              {
+                  var invoiceId = await Harness.QueryScalarAsync<int>(
+                      "INSERT INTO invoices (customer) VALUES (@customer) RETURNING id",
+                      [new DbParameterValue("@customer", "ada")], TestContext.CancellationToken);
+
+                  var total = await Harness.QueryScalarAsync<decimal>(
+                      "SELECT invoice_total(@invoice)",
+                      [new DbParameterValue("@invoice", invoiceId)], TestContext.CancellationToken);
+
+                  Assert.AreEqual(99.99m, total);
+              }
+          }
+          CS
+      - name: The report names the failed test and its engine class
+        run: |
+          set -euo pipefail
+          node skills/dbaitest-debug/scripts/diagnose.mjs --project "$RUNNER_TEMP/Diagnose.Database.Tests" > "$RUNNER_TEMP/report.json"
+          test "$(jq -r '.outcome' "$RUNNER_TEMP/report.json")" = Failed
+          test "$(jq -r '.totals.failed' "$RUNNER_TEMP/report.json")" = 1
+          test "$(jq -r '.totals.passed' "$RUNNER_TEMP/report.json")" = 1
+          test "$(jq -r '.firstFailure.test' "$RUNNER_TEMP/report.json")" = Deliberately_Fails_On_The_Amount
+          test "$(jq -r '.firstFailure.class' "$RUNNER_TEMP/report.json")" = Diagnose.Database.Tests.PostgreSqlDatabaseTests
+          jq -e '.firstFailure.message | test("Assertion failed")' "$RUNNER_TEMP/report.json" > /dev/null
+
   # Every C# example in the references compiles and passes against the fixture whose schema it
   # is written for: an example an agent copies must work.
   reference-snippets:
@@ -268,8 +322,11 @@ jobs:
           test -f .agents/skills/dbaitest-scaffold/scripts/scaffold.mjs
           test -f .claude/skills/dbaitest-add-test/SKILL.md
           test -f .agents/skills/dbaitest-add-test/scripts/locate-tests.mjs
+          test -f .claude/skills/dbaitest-debug/SKILL.md
+          test -f .agents/skills/dbaitest-debug/scripts/diagnose.mjs
           npm exec --yes --package="$tarball" -- dbaitest-skills list | grep -q "dbaitest-scaffold"
           npm exec --yes --package="$tarball" -- dbaitest-skills list | grep -q "dbaitest-add-test"
+          npm exec --yes --package="$tarball" -- dbaitest-skills list | grep -q "dbaitest-debug"
           node .agents/skills/dbaitest-scaffold/scripts/scaffold.mjs --name Smoke.Tests --engines postgres --framework net10.0
 
   # The repository also installs with the vercel-labs skills CLI (`npx skills add dbaitest/agent-skills`).
@@ -291,3 +348,5 @@ jobs:
           test -f .agents/skills/dbaitest-scaffold/versions.json
           test -f .agents/skills/dbaitest-add-test/SKILL.md
           test -f .agents/skills/dbaitest-add-test/versions.json
+          test -f .agents/skills/dbaitest-debug/SKILL.md
+          test -f .agents/skills/dbaitest-debug/versions.json

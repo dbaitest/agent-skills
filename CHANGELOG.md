@@ -9,6 +9,12 @@ change the installer's behaviour or a skill's generated output, and such changes
 
 ### Added
 
+- **`dbaitest-debug`**: finds out why a DbAiTest test fails. `scripts/diagnose.mjs` runs the
+  suite with the result logger and prints a JSON report: the failing test, the **engine class**
+  it failed in, the assertion message, the stack trace and the container log of that test.
+  `references/failures.md` maps the message to the cause and the fix, per class of failure (the
+  test's own assertion, the SQL it ran, the shape guard, the schema, the container, the
+  project); `references/narrowing.md` holds the commands that narrow a failure down.
 - **`dbaitest-add-test`**: adds more tests to a repository that already has a DbAiTest test
   project. `scripts/locate-tests.mjs` finds that project and reports how it is wired (the
   abstract test class, the class per engine, where the schema comes from, the tests that are

@@ -225,7 +225,7 @@ describe('add', () => {
     assert.ok(!existsSync(path.join(box.project, '.claude', '.dbaitest-skills-staging')));
     assert.deepEqual(
       readdirSync(path.join(box.project, '.claude', 'skills')).sort(),
-      ['dbaitest-add-test', 'dbaitest-scaffold'],
+      ['dbaitest-add-test', 'dbaitest-debug', 'dbaitest-scaffold'],
     );
   });
 
@@ -309,7 +309,7 @@ describe('list and remove', () => {
     const lines = result.stdout.trim().split('\n');
     // One line per installed skill, and one location: run from the home directory, the project
     // and the global scope are the same folder and must not be listed twice.
-    assert.deepEqual(lines.map((line) => line.split(/\s{2,}/)[1]).sort(), ['dbaitest-add-test', 'dbaitest-scaffold']);
+    assert.deepEqual(lines.map((line) => line.split(/\s{2,}/)[1]).sort(), ['dbaitest-add-test', 'dbaitest-debug', 'dbaitest-scaffold']);
     assert.equal(new Set(lines.map((line) => line.split(/\s{2,}/)[0])).size, 1, result.stdout);
   });
 
