@@ -111,6 +111,9 @@ The first run pulls the image and takes minutes. Run it until green. A failing t
 the test: seed before the assertion, assert through a second channel, keep the test independent
 of the other tests. If the schema itself is wrong, say so and ask; do not edit it.
 
+When a test fails and the cause is not obvious, `dbaitest-debug` runs the suite, names the test
+and the engine class that failed, and works the cause out.
+
 ## 7. Report
 
 Report what each new test proves, which objects are still untested, and anything you could not

@@ -14,7 +14,8 @@ change the installer's behaviour or a skill's generated output, and such changes
   it failed in, the assertion message, the stack trace and the container log of that test.
   `references/failures.md` maps the message to the cause and the fix, per class of failure (the
   test's own assertion, the SQL it ran, the shape guard, the schema, the container, the
-  project); `references/narrowing.md` holds the commands that narrow a failure down.
+  project); `references/narrowing.md` holds the commands that narrow a failure down. The skill
+  stands on its own: it finds the test project and reads its classes without the other skills.
 - **`dbaitest-add-test`**: adds more tests to a repository that already has a DbAiTest test
   project. `scripts/locate-tests.mjs` finds that project and reports how it is wired (the
   abstract test class, the class per engine, where the schema comes from, the tests that are

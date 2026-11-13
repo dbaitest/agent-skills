@@ -31,14 +31,19 @@ Node 20+ is needed for the report script.
 
 ## 2. Find the test project
 
-The test project is the one whose `.csproj` references `DbAiTest.MSTest`.
+The test project is the one whose `.csproj` references `DbAiTest.MSTest`. Search the repository for
+it (there is usually one).
 
-- If the repository has the `dbaitest-add-test` skill installed, run its locate script to find it:
-  `node <dbaitest-add-test-skill-dir>/scripts/locate-tests.mjs`. It also says which class holds
-  the tests and which engines the project runs.
-- Otherwise, look for the `.csproj` that references `DbAiTest.MSTest`.
+Then read two things of that project, because the report of the next step is easier to read with
+them in hand:
 
-If there is none, the repository has no DbAiTest tests to debug: say so and stop.
+- **the abstract test class** — the class that derives from `DbAiTestBase`. The tests live there,
+  one copy per engine.
+- **the class per engine** — `PostgreSqlDatabaseTests`, `MsSqlDatabaseTests`, `MySqlDatabaseTests`
+  and the like. Each says which engine it runs on and where that engine's schema comes from
+  (`SchemaRoot`, `SchemaSource`).
+
+If the repository has no such project, it has no DbAiTest tests to debug: say so and stop.
 
 ## 3. Reproduce and report
 
