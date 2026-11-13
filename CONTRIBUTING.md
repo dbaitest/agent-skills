@@ -45,7 +45,9 @@ an issue when nuget.org has a newer one. To move:
 
 A release is a tag plus a GitHub release. The `Publish` workflow runs on the published release,
 sets the package version from the tag (`package.json` keeps `0.0.0` on `main`), runs the tests and
-package checks, and publishes to npm with provenance.
+package checks, and publishes to npm. Trusted publishing from GitHub Actions attaches a provenance
+statement automatically; `package.json` does not ask for one, because a publish from a laptop
+cannot produce it (npm fails with "Automatic provenance generation not supported for provider: null").
 
 ```bash
 # Move the Unreleased section of CHANGELOG.md under the new version first.

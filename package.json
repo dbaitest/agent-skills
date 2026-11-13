@@ -28,7 +28,6 @@
     "test": "node --test"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   }
 }
