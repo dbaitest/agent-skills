@@ -154,8 +154,115 @@ jobs:
       - name: Run it
         run: dotnet test "$RUNNER_TEMP/Generated.Database.Tests" --configuration Release
 
-  # Every C# example in references/writing-tests.md compiles and passes against the fixture whose
-  # schema it is written for: an example an agent copies must work.
+  # The skill that adds tests finds the test project a repository already has. It has to find
+  # the projects the scaffolder writes, and say what is in them: the class the tests belong in,
+  # the engine, and where the schema comes from.
+  locate:
+    name: locate (${{ matrix.variant }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: scripts
+            args: --engines postgres --schema-dir test/fixtures/repos/scripts-postgres/db/schema
+            kind: scripts
+            engine: postgres
+            abstract: true
+          - variant: dacpac
+            args: --engines mssql --schema dacpac --sqlproj test/fixtures/repos/sqlproj-shop/database/Shop.Database/Shop.Database.sqlproj
+            kind: dacpac
+            engine: mssql
+            abstract: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Generate the project and locate it
+        env:
+          ARGS: ${{ matrix.args }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/locate"
+          # shellcheck disable=SC2086 # ARGS is a list of options
+          node skills/dbaitest-scaffold/scripts/scaffold.mjs \
+            --name Located.Database.Tests \
+            --dir "$RUNNER_TEMP/locate/Located.Database.Tests" \
+            $ARGS
+          node skills/dbaitest-add-test/scripts/locate-tests.mjs --root "$RUNNER_TEMP/locate" > "$RUNNER_TEMP/locate.json"
+      - name: The report says what is in the project
+        env:
+          EXPECTED_KIND: ${{ matrix.kind }}
+          EXPECTED_ENGINE: ${{ matrix.engine }}
+          EXPECTED_ABSTRACT: ${{ matrix.abstract }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/locate.json"
+          test "$(jq -r '.testProjects | length' "$report")" = 1
+          test "$(jq -r '.testProjects[0].baseTestClass.name' "$report")" = DatabaseTests
+          test "$(jq -r '.testProjects[0].baseTestClass.isAbstract' "$report")" = "$EXPECTED_ABSTRACT"
+          test "$(jq -r '.testProjects[0].engines | join(",")' "$report")" = "$EXPECTED_ENGINE"
+          test "$(jq -r '.testProjects[0].schema.kind' "$report")" = "$EXPECTED_KIND"
+          test "$(jq -r '.testProjects[0].testMethods | length' "$report")" -ge 1
+          test "$(jq -r '.truncated' "$report")" = false
+
+  # The skill that diagnoses a failing test reads the result file of the run: it has to name the
+  # failed test and the engine class it failed in.
+  diagnose:
+    name: diagnose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Generate a project with a failing test
+        run: |
+          set -euo pipefail
+          node skills/dbaitest-scaffold/scripts/scaffold.mjs \
+            --name Diagnose.Database.Tests \
+            --dir "$RUNNER_TEMP/Diagnose.Database.Tests" \
+            --engines postgres \
+            --schema-dir test/fixtures/repos/scripts-postgres/db/schema
+          cat > "$RUNNER_TEMP/Diagnose.Database.Tests/Failing.cs" <<'CS'
+          namespace Diagnose.Database.Tests;
+
+          public abstract partial class DatabaseTests
+          {
+              [TestMethod]
+              public async Task Deliberately_Fails_On_The_Amount()
+              {
+                  var invoiceId = await Harness.QueryScalarAsync<int>(
+                      "INSERT INTO invoices (customer) VALUES (@customer) RETURNING id",
+                      [new DbParameterValue("@customer", "ada")], TestContext.CancellationToken);
+
+                  var total = await Harness.QueryScalarAsync<decimal>(
+                      "SELECT invoice_total(@invoice)",
+                      [new DbParameterValue("@invoice", invoiceId)], TestContext.CancellationToken);
+
+                  Assert.AreEqual(99.99m, total);
+              }
+          }
+          CS
+      - name: The report names the failed test and its engine class
+        run: |
+          set -euo pipefail
+          node skills/dbaitest-debug/scripts/diagnose.mjs --project "$RUNNER_TEMP/Diagnose.Database.Tests" > "$RUNNER_TEMP/report.json"
+          test "$(jq -r '.outcome' "$RUNNER_TEMP/report.json")" = Failed
+          test "$(jq -r '.totals.failed' "$RUNNER_TEMP/report.json")" = 1
+          test "$(jq -r '.totals.passed' "$RUNNER_TEMP/report.json")" = 1
+          test "$(jq -r '.firstFailure.test' "$RUNNER_TEMP/report.json")" = Deliberately_Fails_On_The_Amount
+          test "$(jq -r '.firstFailure.class' "$RUNNER_TEMP/report.json")" = Diagnose.Database.Tests.PostgreSqlDatabaseTests
+          jq -e '.firstFailure.message | test("Assertion failed")' "$RUNNER_TEMP/report.json" > /dev/null
+
+  # Every C# example in the references compiles and passes against the fixture whose schema it
+  # is written for: an example an agent copies must work.
   reference-snippets:
     name: reference-snippets (${{ matrix.fixture }})
     strategy:
@@ -187,7 +294,9 @@ jobs:
           set -euo pipefail
           # shellcheck disable=SC2086 # ARGS is a list of options
           node skills/dbaitest-scaffold/scripts/scaffold.mjs --name Reference.Snippets.Tests --dir "$RUNNER_TEMP/Snippets" $ARGS
-          node scripts/check-reference-snippets.mjs --fixture "$FIXTURE" --project "$RUNNER_TEMP/Snippets"
+          for reference in skills/dbaitest-scaffold/references/writing-tests.md skills/dbaitest-add-test/references/engine-calls.md; do
+            node scripts/check-reference-snippets.mjs --fixture "$FIXTURE" --project "$RUNNER_TEMP/Snippets" --reference "$reference"
+          done
       - name: Run them
         run: dotnet test "$RUNNER_TEMP/Snippets" --configuration Release
 
@@ -211,7 +320,13 @@ jobs:
           npm exec --yes --package="$tarball" -- dbaitest-skills add
           test -f .claude/skills/dbaitest-scaffold/SKILL.md
           test -f .agents/skills/dbaitest-scaffold/scripts/scaffold.mjs
+          test -f .claude/skills/dbaitest-add-test/SKILL.md
+          test -f .agents/skills/dbaitest-add-test/scripts/locate-tests.mjs
+          test -f .claude/skills/dbaitest-debug/SKILL.md
+          test -f .agents/skills/dbaitest-debug/scripts/diagnose.mjs
           npm exec --yes --package="$tarball" -- dbaitest-skills list | grep -q "dbaitest-scaffold"
+          npm exec --yes --package="$tarball" -- dbaitest-skills list | grep -q "dbaitest-add-test"
+          npm exec --yes --package="$tarball" -- dbaitest-skills list | grep -q "dbaitest-debug"
           node .agents/skills/dbaitest-scaffold/scripts/scaffold.mjs --name Smoke.Tests --engines postgres --framework net10.0
 
   # The repository also installs with the vercel-labs skills CLI (`npx skills add dbaitest/agent-skills`).
@@ -231,3 +346,7 @@ jobs:
           test -f .agents/skills/dbaitest-scaffold/SKILL.md
           test -f .claude/skills/dbaitest-scaffold/SKILL.md
           test -f .agents/skills/dbaitest-scaffold/versions.json
+          test -f .agents/skills/dbaitest-add-test/SKILL.md
+          test -f .agents/skills/dbaitest-add-test/versions.json
+          test -f .agents/skills/dbaitest-debug/SKILL.md
+          test -f .agents/skills/dbaitest-debug/versions.json
